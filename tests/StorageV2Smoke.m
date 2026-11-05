@@ -67,8 +67,10 @@ int main(int argc,char **argv) {
             NSString *identifier=PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error);
             check(identifier.length==36,[NSString stringWithFormat:@"v2 archive staged: %@",error]);
             NSString *stage=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"Incoming/%@/Data",identifier]];
+            NSLog(@"DEBUG stage path=%@ content=%@",stage,
+                [fm subpathsOfDirectoryAtPath:[stage stringByDeletingLastPathComponent] error:nil]);
             check([fm fileExistsAtPath:[stage stringByAppendingPathComponent:@"Application Support/test.sqlite"]],
-                 @"staged old data untouched");
+                 @"staged archive data exists");
             check([readFile([app stringByAppendingPathComponent:@"test.sqlite"]) isEqualToString:@"APP_OLD"],
                  @"existing app data still authoritative before cold restart");
             check([readFile([web stringByAppendingPathComponent:@"localstorage.db"]) isEqualToString:@"WEB_OLD"],
