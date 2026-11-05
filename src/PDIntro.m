@@ -50,7 +50,7 @@ static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGrou
     BOOL pending = PDArchivePendingID().length > 0;
     BOOL seen = [[NSUserDefaults standardUserDefaults] boolForKey:kIntroShown];
     BOOL integrityWarning= !pending && !PDPreferencesIntegrityOK();
-    if (integrityWarning && s_integrityNoticeShown) return;
+    if (s_integrityNoticeShown) integrityWarning=NO;
     if (seen && !pending && !PDInboxHasBackup() && !integrityWarning) return;
     UIApplication *application = UIApplication.sharedApplication;
     for (UIScene *scene in application.connectedScenes) {
