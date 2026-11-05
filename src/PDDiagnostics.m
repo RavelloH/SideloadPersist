@@ -159,13 +159,13 @@ void PDLogClear(void) {
 - (void)refresh {
     self.logView.text = PDLogSnapshot();
     NSString *mode = PDIsRedirectActive() ? @"已激活 Documents 重定向" : @"等待目录授权";
-    self.statusLabel.text = [NSString stringWithFormat:@"状态：%@\n版本：v0.6（签名身份兼容性实验）", mode];
+    self.statusLabel.text = [NSString stringWithFormat:@"状态：%@\n版本：v0.7（签名身份预检）", mode];
     NSUInteger length = self.logView.text.length;
     if (length) [self.logView scrollRangeToVisible:NSMakeRange(length-1, 1)];
 }
 - (void)copyLogs {
     NSString *header = [NSString stringWithFormat:
-        @"SideloadPersist v0.6\niOS: %@\nBundle ID: %@\nRedirect: %@\n--- Logs ---\n",
+        @"SideloadPersist v0.7\niOS: %@\nBundle ID: %@\nRedirect: %@\n--- Logs ---\n",
         UIDevice.currentDevice.systemVersion,
         NSBundle.mainBundle.bundleIdentifier ?: @"unknown",
         PDIsRedirectActive() ? @"active" : @"inactive"];

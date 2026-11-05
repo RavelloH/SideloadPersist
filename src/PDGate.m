@@ -18,6 +18,16 @@ static BOOL s_validating = NO;
 static BOOL s_fileProbe = NO;
 static NSString *const kHostFixEnabledKey = @"SideloadPersist.FixFilePickerHostID";
 
+// The entitlement contains the provisioning prefix plus the true signed app ID.
+// If it does not match Info.plist, iOS DocumentPicker can appear yet never
+// deliver the selected URL. Confirmed by controlled iOS 27.0.1 A/B tests.
+static BOOL PDHasSignedIdentityMismatch(void) {
+    NSString *signedID = PDPickerHostFixActualBundleID();
+    NSString *declaredID = NSBundle.mainBundle.bundleIdentifier;
+    return signedID.length > 0 && declaredID.length > 0 &&
+           ![signedID isEqualToString:declaredID];
+}
+
 static NSString *PDNormalizeContainerPath(NSString *p) {
     if ([p hasPrefix:@"/private/var/"]) return [p substringFromIndex:8];
     return p ?: @"";
@@ -61,6 +71,10 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     PDLog(@"Dylib startup; bundle=%@ system=%@; filesystem hooks deferred until authorization",NSBundle.mainBundle.bundleIdentifier ?: @"unknown",UIDevice.currentDevice.systemVersion);
     PDPickerHostFixSetLogger(^(NSString *message) { PDLog(@"HostFix: %@", message); });
     PDPickerHostFixSetEnabled([[NSUserDefaults standardUserDefaults] boolForKey:kHostFixEnabledKey]);
+    PDLog(@"Signed identity preflight: signedBundle=%@ plistBundle=%@ mismatch=%@",
+          PDPickerHostFixActualBundleID() ?: @"unavailable",
+          NSBundle.mainBundle.bundleIdentifier ?: @"unavailable",
+          PDHasSignedIdentityMismatch() ? @"YES" : @"NO");
     for (NSNotificationName name in @[UIApplicationDidBecomeActiveNotification,
                                        UISceneDidActivateNotification,
                                        UIWindowDidBecomeKeyNotification]) {
@@ -214,6 +228,11 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     body.font=[UIFont systemFontOfSize:15];
     self.statusLabel=[[UILabel alloc] init];
     self.statusLabel.text=@"选择目录前，主界面不可操作。";
+    if (PDHasSignedIdentityMismatch()) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"签名身份不一致，文件选择器可能无法返回 URL。\n签名 ID：%@\nBundle ID：%@\n请在重签名工具中确保二者一致，然后重新安装。",
+            PDPickerHostFixActualBundleID(), NSBundle.mainBundle.bundleIdentifier];
+    }
     self.statusLabel.font=[UIFont systemFontOfSize:13];
     self.statusLabel.textColor=UIColor.secondaryLabelColor;
     self.statusLabel.numberOfLines=0;
@@ -233,6 +252,12 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     fileProbe.titleLabel.font=[UIFont systemFontOfSize:15];
     [fileProbe addTarget:self action:@selector(probeFileSelection) forControlEvents:UIControlEventTouchUpInside];
     self.fileProbeButton = fileProbe;
+    if (PDHasSignedIdentityMismatch()) {
+        button.enabled = NO;
+        alternate.enabled = NO;
+        fileProbe.enabled = NO;
+        PDLog(@"Blocking document pickers because signed identity differs from Info.plist; fix the IPA signing configuration, not DOCConfiguration");
+    }
     UIButton *hostFix = [UIButton buttonWithType:UIButtonTypeSystem];
     self.hostFixButton = hostFix;
     [self updateHostFixButton];
@@ -244,7 +269,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     [diagnostics addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,hostFix,button,alternate,fileProbe,diagnostics,self.statusLabel]];
     stack.axis=UILayoutConstraintAxisVertical;
-    stack.spacing=24;
+    stack.spacing=PDHasSignedIdentityMismatch() ? 14 : 24;
     stack.alignment=UIStackViewAlignmentFill;
     stack.translatesAutoresizingMaskIntoConstraints=NO;
     [self.view addSubview:stack];
@@ -264,7 +289,9 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     PDPickerHostFixSetEnabled(enabled);
     if (enabled) PDPickerHostFixInstallIfAvailable();
     [self updateHostFixButton];
-    self.statusLabel.text = enabled ? @"已启用真实签名身份修复，请重新测试文件夹与普通文件。" : @"已关闭修复，可做前后对照。";
+    self.statusLabel.text = PDHasSignedIdentityMismatch() ?
+        @"签名身份仍不一致。实验性 HostFix 不能替代正确签名；请重新签名并安装。" :
+        (enabled ? @"已启用实验性 HostFix，可用于对照；正常情况下不需要此功能。" : @"已关闭实验性 HostFix。推荐保持关闭。");
     PDLog(@"HostFix setting changed: %@",PDPickerHostFixStatus());
 }
 - (void)showDiagnostics {
