@@ -163,7 +163,7 @@ PDArchiveIdentityState PDArchiveInspectIdentity(NSURL *url,NSString **sourceBund
             state=PDArchiveIdentityStateInvalid;break;
         }
         if(sourceBundleID) *sourceBundleID=[value copy];
-        NSString *destination=NSBundle.mainBundle.bundleIdentifier;
+        NSString *destination=NSBundle.mainBundle.bundleIdentifier ?: @"SideloadPersist.StandaloneTest";
         state=(destination.length && [value isEqualToString:destination]) ?
             PDArchiveIdentityStateMatch : PDArchiveIdentityStateDifferentApp;
     }
