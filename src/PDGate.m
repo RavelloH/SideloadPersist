@@ -66,12 +66,10 @@ static BOOL s_choosing = NO;
         return NO;
     }
     __block NSError *fileError = nil;
-    __block NSURL *resolvedRoot = url;
     NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
     NSError *coordError = nil;
     [coordinator coordinateWritingItemAtURL:url options:NSFileCoordinatorWritingForMerging
                                      error:&coordError byAccessor:^(NSURL *newURL) {
-        resolvedRoot = newURL;
         NSURL *docs = [newURL URLByAppendingPathComponent:@"Documents" isDirectory:YES];
         if (![[NSFileManager defaultManager] createDirectoryAtURL:docs
                                      withIntermediateDirectories:YES attributes:nil error:&fileError]) return;
@@ -102,7 +100,7 @@ static BOOL s_choosing = NO;
     if (s_accessStarted && s_scopedURL) [s_scopedURL stopAccessingSecurityScopedResource];
     s_scopedURL = url;
     s_accessStarted = YES;
-    NSURL *docs = [resolvedRoot URLByAppendingPathComponent:@"Documents" isDirectory:YES];
+    NSURL *docs = [url URLByAppendingPathComponent:@"Documents" isDirectory:YES];
     PDSetExternalDocumentsPath(docs.path);
     NSLog(@"[SideloadPersist] Documents redirected to %@",docs.path);
     return YES;
@@ -147,7 +145,7 @@ static BOOL s_choosing = NO;
     title.font=[UIFont boldSystemFontOfSize:27];
     title.textAlignment=NSTextAlignmentCenter;
     UILabel *body=[[UILabel alloc] init];
-    body.text=@"首次启动需要选择一个持久化数据文件夹。\\n将在所选目录中创建 Documents 子文件夹。\\n重新安装后可以再次选择同一文件夹。";
+    body.text=@"首次启动需要选择一个持久化数据文件夹。\n将在所选目录中创建 Documents 子文件夹。\n重新安装后可以再次选择同一文件夹。";
     body.textColor=UIColor.secondaryLabelColor;
     body.numberOfLines=0;
     body.textAlignment=NSTextAlignmentCenter;

@@ -20,6 +20,12 @@ jobs:
           file dist/SideloadPersist.dylib
           xcrun lipo -info dist/SideloadPersist.dylib
           xcrun otool -L dist/SideloadPersist.dylib
+      - name: Run path-mapping smoke tests on macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -framework Foundation -Isrc tests/PathSmoke.m src/PDRedirect.m -o /tmp/pd-path-smoke
+          /tmp/pd-path-smoke
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
