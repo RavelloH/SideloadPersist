@@ -72,8 +72,13 @@ static void archive(NSString *p,BOOL withPrefs,BOOL missingCookie){
 static void scopeChecks(void){
     check(linked(lib(@"Application Support")) && linked(lib(@"WebKit")) && linked(lib(@"Cookies")),
           @"existing three scope symlinks");
-    check(!linked(lib(@"Preferences")) && PDPreferencesHookActive(),
-          @"Preferences uses live Hook, not system directory rename");
+    check(PDPreferencesHookActive(),@"Preferences live Hook installed");
+    if(linked(lib(@"Preferences"))) {
+        char destination[4096]={0};
+        ssize_t count=readlink(lib(@"Preferences").fileSystemRepresentation,destination,sizeof(destination)-1);
+        check(count>0 && ![data(@"Preferences") isEqualToString:[NSString stringWithUTF8String:destination]],
+              @"preexisting foreign Preferences symlink left unchanged");
+    } else check(YES,@"native Preferences does not require a symlink");
     NSDictionary *manifest=json([root() stringByAppendingPathComponent:@"manifest.json"]);
     check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V3"],
           @"V3 manifest after Hook activation");
