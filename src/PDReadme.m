@@ -1,5 +1,6 @@
 #import "PDReadme.h"
 #import "PDStorage.h"
+#import "PDCustomLibrary.h"
 #import <CommonCrypto/CommonDigest.h>
 
 static NSString *PDReadmeHash(NSData *bytes) {
@@ -42,6 +43,9 @@ static NSString *PDReadmeText(NSArray<NSString *> *verifiedScopes) {
             scope,scope,active?([scope isEqualToString:@"Preferences"] ? @"API 实时存储（无需符号链接）" : @"已建立映射"):@"未建立映射",
             active?[NSString stringWithFormat:@"（%@）",descriptions[scope]]:@""];
     }
+    for(NSString *name in PDCustomLibraryVerified()) {
+        [readme appendFormat:@"| `Data/Application Support/SideloadPersist.Library/%@` | `Library/%@` | 已建立映射（应用自建目录） |\n",name,name];
+    }
     [readme appendString:@"\nApplication Support、WebKit、Cookies 通过原路径符号链接持久化；Preferences 使用开发中的 API Hook 直接保存实时偏好域（不修改系统的 Library/Preferences 目录）。`manifest.json` 包含用于自动恢复的机器可读清单。对于数据库（SQLite/WAL）、WebKit 等，**在 App 完全退出后再备份或直接编辑文件**，以免破坏数据一致性。\n\n"
         @"## 其他目录与文件\n\n"
         @"| 名称 | 作用 |\n"
@@ -51,6 +55,7 @@ static NSString *PDReadmeText(NSArray<NSString *> *verifiedScopes) {
         @"| `Incoming/` | 已解压、校验完成、等待下一次冷启动恢复的数据 |\n"
         @"| `Backups/` | 执行恢复时保留的上一个数据版本，供回退使用 |\n"
         @"| `manifest.json` | 当前应用的映射范围、源路径与格式 |\n"
+        @"| `library-discovery.json` | 候选 Library 子目录的识别、映射及冲突诊断 |\n"
         @"| `restore-pending.txt` | 尚待应用的恢复事务标识；请勿手工删除 |\n"
         @"| `restore-last.json` | 最近一次成功恢复的收据 |\n"
         @"| `README.md` | 本说明，随数据映射变化自动更新（除非手动编辑过） |\n\n"
@@ -60,7 +65,8 @@ static NSString *PDReadmeText(NSArray<NSString *> *verifiedScopes) {
         @"3. 确认备份安全后，才删除并重新安装应用。注入并加载 SideloadPersist 后，导入备份 ZIP，按提示退出并重新打开 App。\n"
         @"4. 观察恢复收据和实际应用数据。若恢复失败，请保留 ZIP 与 `Backups/`，不要覆盖现有数据。\n\n"
         @"## 范围与安全提示\n\n"
-        @"- `Library/Caches`、`tmp`、Keychain、App Groups 以及其他未列出的目录 **目前不自动持久化**。部分服务还受签名团队、沙盒权限或 iOS 系统策略影响。\n"
+        @"- `Library/Caches`、`tmp`、Keychain、App Groups 和系统管理的其他目录 **目前不自动持久化**。仅对应用命名高度匹配的其他 Library 子目录或由插件配置明确列出的安全目录进行额外映射；新创建的自建目录在下一次冷启动时发现。\n"
+        @"- 其他自建目录放在 `Data/Application Support/SideloadPersist.Library/<目录名>` 中，随 Application Support 一起纳入 ZIP；**不要**手动移动其根目录或删除原路径符号链接。\n"
         @"- 通过「文件」App 访问此目录通常需要 IPA 的文件共享选项和系统提供对应入口。此目录不是可以被其他 App 任意读取的公共沙盒。\n"
         @"- 迁移后的目录可能包含登录信息、Cookie 和访问令牌。**请将 ZIP 和文件副本视为敏感资料**，谨慎分享。\n"
         @"- 手动修改本 README 后，插件不会覆盖你的编辑；目录映射的权威状态以 `manifest.json` 为准。\n\n"
