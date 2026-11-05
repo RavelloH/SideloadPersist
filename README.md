@@ -1,6 +1,27 @@
-# SideloadPersist — iOS 数据持久化 dylib（实验性）
+# SideloadPersist — iOS 私有数据持久化 dylib（RC 候选阶段）
 
 **Preferences API Hook 研发版：Application Support / WebKit / Cookies 使用目录重定位；Preferences 使用按域实时写入的 API Hook，支持多目录 ZIP v3，同时兼容 v1/v2。** StorageProbe 已在 iOS 27 真机验证 v3 跨安装恢复，但不代表所有第三方 App、系统域或 Framework 的行为均已覆盖。不依赖测试 Bundle ID、Info.plist 开关、标记文件，也不依赖系统文件选择器授权。
+
+## RC 阶段的安全约束（2026-11）
+
+当前版本开始进入 **Release Candidate 候选验证**，并非已正式发布稳定版，也没有自动创建 GitHub Release。StorageProbe 的 iOS 真机验证已证明主要四目录范围及自动识别的自建 Library 目录可跨安装读取；公开 RC 仍需完成至少一轮真实第三方 App、异常存储和更换签名环境的验收。
+
+### 备份身份核对与旧 ZIP 兼容
+
+新的 `manifest.json` 使用已有的 `originalBundleID` 记录备份来源。选择 ZIP 后插件会校验来源 App 标识：匹配可直接进入数据暂存；**来源不同或清单缺少来源身份**时，会先给出明显提示，并要求手动确认才允许导入。对于用户明确确认的历史 v1/v2/v3 备份，原有兼容恢复路径保留；默认编程接口不允许跳过核对。标识匹配不能证明备份来自可信作者或防止 ZIP 内人为修改，不能视为密码学签名验证。更换 Team ID 不应当自动阻止导入，但 Keychain、App Groups、部分登录状态可能因此失效；更换 Bundle ID 同样可能影响 Preferences 和业务数据库，需要用户自行核实。
+
+### 偏好数据完整性
+
+Preferences API Hook 的实时文件更新失败时，为尽量维持 App 运行，可继续通过系统原生偏好 API 写入。但两份数据可能不一致：插件会在 `Documents/SideloadPersist/preferences-integrity-warning.json` 记录**不含偏好值**的完整性错误，并在状态信息显示备份风险。完整性标记不会因下一次普通写入成功而自动消失；StorageProbe 将其判定为 `BACKUP_NOT_READY`，拒绝生成有效备份基线。此时请保留原 App、原始备份及诊断记录，**不得按正常恢复指南直接卸载原 App**。
+
+进一步修复了 NSUserDefaults 搜索域的部分行为：命令行参数域优先于应用域；删除已管理的键后，可回退到 NSGlobalDomain 或注册默认值，避免在读取已删除键时错误地复活旧应用偏好值。仍不承诺对所有系统域、App Group、任意框架行为的完全透明替代。
+
+### 恢复完成的准确含义
+
+**ZIP 校验通过**表示文件通过静态格式检查；**暂存成功**表示下一次冷启动可以尝试替换受支持的数据目录；**收据 committed**表示插件的目录恢复事务已提交。这些步骤都不保证业务应用能够正确读取数据或恢复服务器登录态。用户应始终在重新启动后检查关键内容，并将独立 ZIP 保留在应用文件夹之外。
+
+RC 的主要待验收项包括：代表性的原生 App 与 WebView App、确有签名身份变化的安装过程、低磁盘空间下的 Preferences 故障表现、其他线程或框架高频调用，以及额外 Library 目录的显式声明路径。上述工作未完成前，仅建议对具备独立原始备份的非关键 App 试用。
+
 
 ## 运行机制
 
@@ -32,7 +53,7 @@ App 沙盒/
 
 ## 首次介绍页
 
-完成同步初始化后，等 App 存在一个有效前台 Scene，以 **仅一个自定义高度 detent 的 Sheet** 展示一次介绍页（iOS 16+ 约为可用高度的 84%，高度至少按 640pt 申请并由系统上限裁剪）；不允许向上扩大。iOS 15 回退为单一 large detent。为避免介绍内容被截断，介绍页已去掉内层 UIScrollView，使标题、路径和按钮同时可见。包含大标题、SF Symbols 图标、功能介绍、文件目录、项目仓库及作者入口、独立六步恢复指南（正常使用、签名过期、重新安装、恢复备份、大功告成、更多可能）和备份 ZIP 导入。六步指南使用独立滚动视图，上下边缘通过与系统背景色一致的渐变层柔和隐去内容，暗色模式不再出现灰色光带；「返回」按钮置于固定底部同色背景栏内，始终在安全区域上方，不随正文滚动。用户点击开始使用或向下关闭后，后续通常不再展示，也不驻留悬浮按钮或轮询监听。首次提示标记升级为 v3，使已体验旧版的测试 App 能重新看到新版 UI。如果已经完成介绍的 App 后续在 `SideloadPersist/Inbox` 出现 ZIP，插件会在下一次前台激活时重新展示导入入口；成功暂存后将这个 ZIP 移入 `Inbox/Imported/` 保留，以避免每次启动反复提示。
+完成同步初始化后，等 App 存在一个有效前台 Scene，以 **仅一个自定义高度 detent 的 Sheet** 展示一次介绍页（iOS 16+ 约为可用高度的 84%，高度至少按 640pt 申请并由系统上限裁剪）；不允许向上扩大。iOS 15 回退为单一 large detent。为避免介绍内容被截断，介绍页已去掉内层 UIScrollView，使标题、路径和按钮同时可见。包含大标题、SF Symbols 图标、功能介绍、文件目录、项目仓库及作者入口、独立六步恢复指南（受支持的范围、先保留备份、校验备份、暂存恢复、核对恢复结果、保留与限制）和备份 ZIP 导入。六步指南使用独立滚动视图，上下边缘通过与系统背景色一致的渐变层柔和隐去内容，暗色模式不再出现灰色光带；「返回」按钮置于固定底部同色背景栏内，始终在安全区域上方，不随正文滚动。用户点击开始使用或向下关闭后，后续通常不再展示，也不驻留悬浮按钮或轮询监听。首次提示标记升级为 v3，使已体验旧版的测试 App 能重新看到新版 UI。如果已经完成介绍的 App 后续在 `SideloadPersist/Inbox` 出现 ZIP，插件会在下一次前台激活时重新展示导入入口；成功暂存后将这个 ZIP 移入 `Inbox/Imported/` 保留，以避免每次启动反复提示。
 
 成功导入 ZIP 后，界面先尝试从半屏过渡至 large detent，再进入不可手势关闭的全屏完成页面，显示绿色成功图标与「退出 App」按钮，防止在下次冷启动应用恢复前继续操作。**按钮由用户主动触发 `exit(0)`，iOS 不提供公开的自行重启 API，因此用户仍需手动再次打开 App。** 这种主动退出可能被系统视为不正常退出；在正式版中应评估更自然的 UX。恢复包在退出前已被完整校验并持久暂存。
 
@@ -184,23 +205,23 @@ StorageProbe 真机恢复验证达到 **44 PASS / 0 FAIL / 1 SKIP**，四类偏�
 
 ## 自定义 Library 私有子目录（Application Support 内嵌备份）
 
-SideloadPersist 不处理普通 Documents 用户文件，也**不**对整个 \`Library\` 进行重定位。Apple 允许应用在 \`Library\` 下建立自己的子目录，但许多框架/系统组件也使用该区域。因此采用保守的定向发现：
+SideloadPersist 不处理普通 Documents 用户文件，也**不**对整个 `Library` 进行重定位。Apple 允许应用在 `Library` 下建立自己的子目录，但许多框架/系统组件也使用该区域。因此采用保守的定向发现：
 
-- 自动发现以当前 App **Bundle ID** 命名的目录，以及与长度至少五个字符的 **CFBundleName / CFBundleDisplayName** 前缀匹配的自建目录。例如 StorageProbe 的 \`Library/StorageProbeCustomPersistent\`。
-- 如遇非标准自建目录，IPA 的 Info.plist 可以列出 \`SideloadPersistAdditionalLibraryScopes\`（字符串数组，只写直接子目录名），只对已存在的目标执行迁移。此配置**不影响** Application Support、WebKit、Cookies、Preferences 的默认行为。
+- 自动发现以当前 App **Bundle ID** 命名的目录，以及与长度至少五个字符的 **CFBundleName / CFBundleDisplayName** 前缀匹配的自建目录。例如 StorageProbe 的 `Library/StorageProbeCustomPersistent`。
+- 如遇非标准自建目录，IPA 的 Info.plist 可以列出 `SideloadPersistAdditionalLibraryScopes`（字符串数组，只写直接子目录名），只对已存在的目标执行迁移。此配置**不影响** Application Support、WebKit、Cookies、Preferences 的默认行为。
 - 如果 SideloadPersist 备份中已有过去映射的自建目录，下次冷启动会从备份自动重建原始符号链接，即使新安装时该目录还不存在。
-- 绝不自动迁移 \`Caches\`、\`Preferences\`、\`SplashBoard\`、\`Saved Application State\`、\`Application Support\`、\`WebKit\`、\`Cookies\`、\`group.*\`、\`com.apple.*\` 及非法/非顶层目录。其他不确定来源的目录只观察、不搬移。不会递归遍历整个 Library。
+- 绝不自动迁移 `Caches`、`Preferences`、`SplashBoard`、`Saved Application State`、`Application Support`、`WebKit`、`Cookies`、`group.*`、`com.apple.*` 及非法/非顶层目录。其他不确定来源的目录只观察、不搬移。不会递归遍历整个 Library。
 
-自建目录的原始路径 \`Library/<name>\` 映射到：
+自建目录的原始路径 `Library/<name>` 映射到：
 
-\`\`\`text
+```text
 Documents/SideloadPersist/Data/Application Support/
   SideloadPersist.Library/<name>/
-\`\`\`
+```
 
-**这是原有 Application Support 备份范围的子目录**，因此无需改变 ZIP v3 的格式；普通手动压缩备份仍然只需要完整压缩 \`Documents/SideloadPersist\`。在 \`manifest.json\` 的 \`additionalLibraryMappings\` 中记录已验证的映射，自动 README 展示原路径和备份路径。\`library-discovery.json\` 记录筛选结果、冲突和未选中条目数量，不包含文件内容。
+**这是原有 Application Support 备份范围的子目录**，因此无需改变 ZIP v3 的格式；普通手动压缩备份仍然只需要完整压缩 `Documents/SideloadPersist`。在 `manifest.json` 的 `additionalLibraryMappings` 中记录已验证的映射，自动 README 展示原路径和备份路径。`library-discovery.json` 记录筛选结果、冲突和未选中条目数量，不包含文件内容。
 
-遇到原目录和目标都含数据、外来的符号链接或系统拒绝目录操作时，仅保留原状并记录原因；不自动合并或覆盖。新建目录一般在下一次冷启动时发现，研发测试可通过 \`PDStorageRefreshOptionalMappings()\` 在同一轮一键综合测试里立即触发刷新。
+遇到原目录和目标都含数据、外来的符号链接或系统拒绝目录操作时，仅保留原状并记录原因；不自动合并或覆盖。新建目录一般在下一次冷启动时发现，研发测试可通过 `PDStorageRefreshOptionalMappings()` 在同一轮一键综合测试里立即触发刷新。
 
 **验收范围**：macOS CI 增加首次迁移、冲突拒绝、ZIP v3 冷启动恢复、重装后缺少原符号链接时的重新建立、旧数据保留和系统目录未被触碰的测试。iOS 真机的自建目录迁移仍需实测，不应将其视为已验证的全量 Library 数据备份能力。
 
