@@ -78,6 +78,11 @@ NSString *PDArchivePendingID(void) {
                 stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 }
 NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
+    return PDArchiveStageZIPWithIdentityApproval(zipURL,NO,error);
+}
+NSString *PDArchiveStageZIPWithIdentityApproval(NSURL *zipURL,
+                                               BOOL userApprovedException,
+                                               NSError **error) {
     if (!zipURL.isFileURL || ![[zipURL.pathExtension lowercaseString] isEqualToString:@"zip"]) {
         PDImportError(error,1,@"仅支持 ZIP 格式备份包");
         return nil;
@@ -86,13 +91,25 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
         PDImportError(error,2,@"已有等待恢复的数据包，请先完全退出并重新启动 App");
         return nil;
     }
+    NSString *sourceBundle=nil;
+    PDArchiveIdentityState identity=PDArchiveInspectIdentity(zipURL,&sourceBundle);
+    if(identity==PDArchiveIdentityStateInvalid) {
+        PDImportError(error,12,@"无法确认 ZIP 清单，文件可能损坏或不受支持");
+        return nil;
+    }
+    if(identity!=PDArchiveIdentityStateMatch && !userApprovedException) {
+        PDImportError(error,13,identity==PDArchiveIdentityStateDifferentApp ?
+            [NSString stringWithFormat:@"备份属于 %@，与当前 App 不同；请先确认来源",sourceBundle ?: @"其他应用"] :
+            @"此旧版 ZIP 未记录应用身份，请在导入界面确认来源后重试");
+        return nil;
+    }
     // Never silently drop a scope from a user backup. Unknown Data/*
     // directories must be reported rather than partially restored.
     if (PDV2ZIPHasUnsupportedScopes(zipURL)) {
         PDImportError(error,11,@"备份包含尚未支持的数据目录，已拒绝不完整恢复");
         return nil;
     }
-    if (PDV2ZIPHasExtraScopes(zipURL)) return PDV2StageZIP(zipURL,error);
+    if (PDV2ZIPHasExtraScopes(zipURL)) return PDV2StageZIP(zipURL,userApprovedException,error);
     BOOL access=[zipURL startAccessingSecurityScopedResource];
     mz_zip_archive zip={0};
     if (!mz_zip_reader_init_file(&zip,zipURL.fileSystemRepresentation,0)) {
