@@ -97,7 +97,8 @@ jobs:
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
             -miphoneos-version-min=15.0 -fobjc-arc -fmodules -O2 -Wall -Wextra \
             -Wno-unused-parameter -framework UIKit -framework Foundation \
-            -framework CoreData -framework WebKit -lsqlite3 examples/StorageProbe/main.m \
+            -framework CoreData -framework WebKit -framework Security -lsqlite3 \
+            examples/StorageProbe/main.m examples/StorageProbe/FullCycle.m \
             -o dist/storage-stage/Payload/StorageProbe.app/StorageProbe
           cp examples/StorageProbe/Info.plist dist/storage-stage/Payload/StorageProbe.app/Info.plist
           plutil -lint dist/storage-stage/Payload/StorageProbe.app/Info.plist

@@ -3,6 +3,7 @@
 #import <sqlite3.h>
 #import <CoreData/CoreData.h>
 #import <WebKit/WebKit.h>
+#import "FullCycle.h"
 #import <fcntl.h>
 #import <sys/stat.h>
 #import <unistd.h>
@@ -11,6 +12,8 @@
 @property(nonatomic,strong) UITextView *output;
 @property(nonatomic,strong) NSMutableString *history;
 @property(nonatomic,strong) WKWebView *webKitProbe;
+@property(nonatomic,strong) SPFullCycle *fullCycle;
+@property(nonatomic,strong) UIButton *fullCycleButton;
 @end
 
 @implementation StorageProbeController
@@ -47,11 +50,13 @@
     subtitle.textColor=UIColor.secondaryLabelColor;
     subtitle.numberOfLines=0;
     subtitle.textAlignment=NSTextAlignmentCenter;
+    self.fullCycleButton=[self button:@"一键综合测试 · 备份前 / 恢复后" action:@selector(runFullCycle)];
+    self.fullCycleButton.titleLabel.font=[UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     UIButton *run=[self button:@"运行存储 API 测试" action:@selector(runTests)];
     UIButton *copy=[self button:@"复制结果" action:@selector(copyResults)];
     UIButton *repeat=[self button:@"再次运行（验证持久化）" action:@selector(runTests)];
     UIButton *webKit=[self button:@"研究 WebKit / Preferences 存储范围" action:@selector(runExtendedScope)];
-    UIStackView *buttons=[[UIStackView alloc] initWithArrangedSubviews:@[run,repeat,webKit,copy]];
+    UIStackView *buttons=[[UIStackView alloc] initWithArrangedSubviews:@[self.fullCycleButton,copy,run,repeat,webKit]];
     buttons.axis=UILayoutConstraintAxisVertical;
     buttons.spacing=10;
     self.output=[[UITextView alloc] init];
@@ -73,7 +78,20 @@
         [self.output.heightAnchor constraintGreaterThanOrEqualToConstant:120],
     ]];
     [self line:[NSString stringWithFormat:@"iOS=%@ bundle=%@",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier]];
-    [self line:@"注入 dylib 后首次运行可能先显示持久化介绍页。关闭后测试。"];
+    [self line:@"建议直接点击顶部「一键综合测试」。仅需备份前、恢复后各运行一次，自动比对所有支持的存储数据。"];
+}
+- (void)runFullCycle {
+    if(self.fullCycle) return;
+    self.history=[NSMutableString string];
+    self.fullCycleButton.enabled=NO;
+    __weak typeof(self) weakSelf=self;
+    self.fullCycle=[[SPFullCycle alloc] initWithParent:self log:^(NSString *message) {
+        [weakSelf line:message];
+    } completion:^{
+        weakSelf.fullCycleButton.enabled=YES;
+        weakSelf.fullCycle=nil;
+    }];
+    [self.fullCycle start];
 }
 - (void)reportScopeFootprints:(NSString *)phase {
     NSString *library=[NSHomeDirectory() stringByAppendingPathComponent:@"Library"];
