@@ -235,6 +235,10 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         }
     }
     self.mappedScopes=[verified copy];
+    NSDictionary *(*preferenceHealth)(void)=(NSDictionary *(*)(void))dlsym(RTLD_DEFAULT,"PDPreferencesHealth");
+    NSDictionary *preferenceStats=preferenceHealth?preferenceHealth():nil;
+    [self line:[NSString stringWithFormat:@"PREFERENCES_STORAGE_USAGE domains=%@ bytes=%@",
+        preferenceStats[@"domainFiles"] ?: @"unknown",preferenceStats[@"bytes"] ?: @"unknown"]];
     if(self.verifying)
         [self check:[receipt[@"result"] isEqualToString:@"committed"]
              label:@"RESTORE_RECEIPT committed after reinstall"];
@@ -456,6 +460,11 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         [suite synchronize];
         [self record:@"defaultsSuite" before:@(original) after:@(original+1) migrated:YES];
     } else [self skip:@"NSUserDefaults custom suite unavailable"];
+    [prefs setObject:@"remove-me" forKey:@"StorageProbe.FullCycle.DeletionProbe"];
+    [prefs removeObjectForKey:@"StorageProbe.FullCycle.DeletionProbe"];
+    [self check:![prefs objectForKey:@"StorageProbe.FullCycle.DeletionProbe"] &&
+         ![prefs.dictionaryRepresentation objectForKey:@"StorageProbe.FullCycle.DeletionProbe"]
+         label:@"NSUserDefaults deleted key absent from objectForKey and dictionaryRepresentation"];
 
     NSString *cache=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/StorageProbe-fullcycle.bin"];
     NSData *previous=[NSData dataWithContentsOfFile:cache];
@@ -735,6 +744,10 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         [self line:@"INCOMPLETE: report serialization failed; no baseline saved"];
     }
     if(!valid) [self line:@"BACKUP_NOT_READY: initialization or data checks failed; diagnostic only. DO NOT delete/reinstall this App based on this run."];
+    NSDictionary *(*preferenceHealth)(void)=(NSDictionary *(*)(void))dlsym(RTLD_DEFAULT,"PDPreferencesHealth");
+    NSDictionary *preferences=preferenceHealth?preferenceHealth():nil;
+    [self line:[NSString stringWithFormat:@"PREFERENCES_STORAGE_FINAL domains=%@ bytes=%@",
+        preferences[@"domainFiles"] ?: @"unknown",preferences[@"bytes"] ?: @"unknown"]];
     [self line:[NSString stringWithFormat:@"FULL_CYCLE_SUMMARY phase=%@ pass=%lu fail=%lu skip=%lu",
         phase,(unsigned long)self.passes,(unsigned long)self.failures,(unsigned long)self.skips]];
     if(self.verifying)

@@ -170,3 +170,5 @@ Hook 当前涵盖 Foundation `NSUserDefaults` 常见 typed getter/setter、objec
 一键综合测试同时修复了误导性通过信号：没有清单、README、原路径映射，或恢复比较出错时，输出 `BACKUP_NOT_READY` / `BACKUP_ABORTED`，诊断保存在 `fullcycle-diagnostics.json`，**不会**生成新的有效备份基线，也不会再输出 `BACKUP_BASELINE_READY`。只有 `fail=0` 且报告写入成功才允许开始备份。单个数据文件能直接从 Documents 读写不再被用作映射成功的证据。
 
 新增加三类模拟回归：**非空源与非空目标冲突**（继续恢复 Application Support/WebKit/Cookies 并保持 Preferences 双份原样）、**非空源与空目标**（自动迁移、保留数据）、**系统或其他软件创建的外来 Preferences 符号链接**（保留链接，正常启动其他范围）。尚不能从目前的用户日志推断 iOS 27 上冲突的确切底层原因；新版诊断会给出对应 scope 和 reason。
+
+一次性综合测试新增 `PREFERENCES_STORAGE_USAGE` / `PREFERENCES_STORAGE_FINAL`（域文件数量及字节数），用于观察实时偏好后端的实际空间开销；并检查删除键是否同时从 `objectForKey` 与 `dictionaryRepresentation` 消失。也验证 CFPreferences 的精确域 API 与 NSUserDefaults 读取的一致性，不必单独重装第二次。
