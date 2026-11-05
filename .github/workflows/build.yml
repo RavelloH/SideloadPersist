@@ -89,6 +89,8 @@ jobs:
           HOME="$IDENTITY_HOME" /tmp/pd-v2-storage-smoke identity-mismatch
           LEGACY_HOME="$(mktemp -d)"
           HOME="$LEGACY_HOME" /tmp/pd-v2-storage-smoke identity-legacy
+          CORRUPT_HOME="$(mktemp -d)"
+          HOME="$CORRUPT_HOME" /tmp/pd-v2-storage-smoke identity-warning
           README_HOME="$(mktemp -d)"
           HOME="$README_HOME" /tmp/pd-v2-storage-smoke readme
           MULTI_HOME="$(mktemp -d)"
