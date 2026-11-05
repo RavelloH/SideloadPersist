@@ -71,6 +71,8 @@ The independent PickerProbe app now logs `IDENTITY_MISMATCH` if it detects a dis
 python scripts/prepare_matched_ipa.py dist/PickerProbe-unsigned.ipa dist/PickerProbe-matched-unsigned.ipa app.crystal7397.mango7474
 ```
 
+Or use **Actions → Build experimental dylib → Run workflow**, supplying `matched_bundle_id=app.crystal7397.mango7474`, then download the additional `PickerProbe-matched-unsigned-ipa` artifact. This input is optional; ordinary push builds continue to create the standard two artifacts.
+
 Then sign the **patched IPA** with the same signer/certificate that produced the previously observed entitlement value, and install it independently. Do not inject any dylib. Re-open its logs and verify `signedBundle == plistBundle` in the **final signed app**; the signing tool may rewrite them again. Only then repeat the file and folder picker tests. Test with the HostFix toggle OFF first to avoid confounding factors. If the signed IDs still mismatch, change the signer configuration so it signs the intended bundle identifier, or use a compatible provisioning profile. Never manually forge entitlements to bypass provisioning constraints.
 
 The patch script rejects already-signed input: modifying a signed IPA invalidates its signature, and the output must always be signed again. **Do not rename the user's production app bundle ID** without a backup or considering its identity-dependent services. This experiment is for the disposable PickerProbe app only.

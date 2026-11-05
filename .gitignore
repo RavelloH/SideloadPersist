@@ -5,3 +5,5 @@ dist/
 *.mobileprovision
 *.key
 .ref-LiveContainer/
+__pycache__/
+*.pyc

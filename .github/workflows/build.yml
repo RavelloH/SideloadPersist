@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      matched_bundle_id:
+        description: 'Optional: entitlement application-identifier suffix (for matched PickerProbe artifact)'
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -43,6 +48,17 @@ jobs:
           (cd dist/probe-stage && ditto -c -k --keepParent Payload ../PickerProbe-unsigned.ipa)
           file dist/PickerProbe-unsigned.ipa
           unzip -l dist/PickerProbe-unsigned.ipa
+      - name: Prepare unsigned identity-matched PickerProbe IPA
+        if: ${{ inputs.matched_bundle_id != '' }}
+        env:
+          MATCHED_BUNDLE_ID: ${{ inputs.matched_bundle_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_matched_ipa.py \
+            dist/PickerProbe-unsigned.ipa \
+            dist/PickerProbe-matched-unsigned.ipa \
+            "$MATCHED_BUNDLE_ID"
       - name: Upload dylib
         uses: actions/upload-artifact@v4
         with:
@@ -55,5 +71,13 @@ jobs:
         with:
           name: PickerProbe-unsigned-ipa
           path: dist/PickerProbe-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload matched identity test IPA
+        if: ${{ inputs.matched_bundle_id != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: PickerProbe-matched-unsigned-ipa
+          path: dist/PickerProbe-matched-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
