@@ -126,3 +126,5 @@ v2 成功恢复后生成 `SideloadPersist/restore-last.json` 收据，记录恢�
 测试将结果区分为 `PASS`、`FAIL`、`SKIP` 和 `OBS NATIVE_NOT_IN_ZIP`：Preferences/NSUserDefaults、Keychain、Caches 与 App Groups 目前**不在 SideloadPersist 备份范围中**，因此即使其原生状态跨安装保存，也不应算作插件恢复成功。`SKIP` 代表未获得相应权限或未配置；不是应用故障。Keychain 的持久行为还受 Team ID、Keychain access groups 等签名条件约束。当前测试用 App Group 可通过构建时的可选 `StorageProbeTestAppGroup` Info.plist 字段传入，使用前需确保匹配的签名 entitlement。
 
 基线存在但某项失败时，会保存标记为 `complete=false` 的部分结果，并在日志中显式警告；不要用它证明失败项目成功恢复。测试完成并输出 `BACKUP_BASELINE_READY` **之前不要开始压缩**；WebKit 数据写盘可能异步，压缩前仍必须彻底退出 App。旧版 StorageProbe 的单项按钮保留用于故障定位。
+
+本次综合测试继续增加：`fopen`/`fputs`/`fflush`、`NSFileHandle`、`NSFileManager` 拷贝与移动、中文与 Emoji 文件名、`NSDataReadingMappedIfSafe`、CFPreferences 独立同步、合成 `NSURLCache` 响应、`NSTemporaryDirectory()`。这些测试不需要联网，不访问实际应用凭据或个人内容。已有的文件/数据库/WebKit 恢复断言不会因添加新探针而放松。`fullcycle-baseline.json` 会标明 `complete`，如遇 FAIL，后续恢复验证将提示基线不完整而不会误判为成功。

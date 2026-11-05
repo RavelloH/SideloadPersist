@@ -18,9 +18,6 @@ static NSString *SPFingerprint(NSData *data) {
     for(NSUInteger i=0;i<sizeof(digest);i++) [result appendFormat:@"%02x",digest[i]];
     return result;
 }
-static NSInteger SPInt(id value) {
-    return [value respondsToSelector:@selector(integerValue)] ? [value integerValue] : 0;
-}
 static id SPJSON(NSString *path) {
     NSData *bytes=[NSData dataWithContentsOfFile:path];
     if (!bytes) return nil;
@@ -132,12 +129,23 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         install,previous ?: @"none"]];
     if(self.baseline && !self.verifying)
         [self line:@"NOTE This installation has a baseline; it will be refreshed after all tests finish."];
+    if(self.verifying && ![self.baseline[@"complete"] boolValue])
+        [self check:NO label:@"RESTORE_BASELINE is incomplete; results must not be treated as a validated full recovery"];
     if(!self.baseline)
         [self line:@"NOTE No earlier full-cycle baseline found. This run prepares the FIRST backup; it cannot verify an older archive."];
     NSDictionary *manifest=SPJSON([self.root stringByAppendingPathComponent:@"manifest.json"]);
     NSDictionary *receipt=SPJSON([self.root stringByAppendingPathComponent:@"restore-last.json"]);
     [self line:[NSString stringWithFormat:@"PERSISTENCE_MANIFEST %@ scopes=%@",
         manifest[@"format"] ?: @"absent",manifest[@"scopes"] ?: @[]]];
+    for(NSString *name in @[@"Preferences",@"Caches",@"tmp"]) {
+        NSString *path=[name isEqualToString:@"tmp"] ? NSTemporaryDirectory() :
+            [home stringByAppendingPathComponent:[@"Library" stringByAppendingPathComponent:name]];
+        BOOL directory=NO;
+        BOOL exists=[fm fileExistsAtPath:path isDirectory:&directory];
+        NSArray *entries=exists && directory ? [fm contentsOfDirectoryAtPath:path error:nil] : nil;
+        [self line:[NSString stringWithFormat:@"NATIVE_SCOPE %@ exists=%@ immediateEntries=%lu",
+            name,exists?@"yes":@"no",(unsigned long)entries.count]];
+    }
     [self line:[NSString stringWithFormat:@"RESTORE_RECEIPT result=%@ scopes=%@",
         receipt[@"result"] ?: @"absent",receipt[@"scopes"] ?: @[]]];
     for(NSString *scope in @[@"Application Support",@"WebKit",@"Cookies"]) {
@@ -157,6 +165,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     [self testSQLite:data];
     [self testCoreData:data];
     [self testUnmigrated];
+    [self testNativeStores];
     [self testKeychain];
     [self testAppGroups];
     [self beginWebKit];
@@ -213,6 +222,48 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     }
     [self check:ok label:@"POSIX open/ftruncate/pwrite/mmap/fsync"];
 
+    // Cover additional APIs used by third-party apps, not only NSData/POSIX.
+    NSString *stdio=[directory stringByAppendingPathComponent:@"fullcycle-stdio.txt"];
+    FILE *file=fopen(stdio.fileSystemRepresentation,"wb");
+    BOOL stdioOK=file!=NULL;
+    if(file) {
+        stdioOK=fputs("STORAGEPROBE_STDIO",file)>=0 && fflush(file)==0;
+        stdioOK=fclose(file)==0 && stdioOK;
+    }
+    NSString *stdioRead=[NSString stringWithContentsOfFile:stdio encoding:NSUTF8StringEncoding error:nil];
+    [self check:stdioOK && [stdioRead isEqualToString:@"STORAGEPROBE_STDIO"]
+         label:@"C stdio fopen/fputs/fflush/fclose + NSString read"];
+
+    NSString *handlePath=[directory stringByAppendingPathComponent:@"fullcycle-handle.bin"];
+    [fm createFileAtPath:handlePath contents:[NSData data] attributes:nil];
+    NSFileHandle *handle=[NSFileHandle fileHandleForWritingAtPath:handlePath];
+    NSData *handlePayload=[@"STORAGEPROBE_FILEHANDLE" dataUsingEncoding:NSUTF8StringEncoding];
+    BOOL handleOK=handle!=nil;
+    @try {
+        if(handle) {
+            [handle writeData:handlePayload];
+            [handle synchronizeFile];
+            [handle closeFile];
+        }
+    } @catch(__unused NSException *exception) {handleOK=NO;}
+    [self check:handleOK && [[NSData dataWithContentsOfFile:handlePath] isEqualToData:handlePayload]
+         label:@"NSFileHandle create/write/synchronize/read"];
+
+    NSString *copy=[directory stringByAppendingPathComponent:@"fullcycle-copy.bin"];
+    NSString *moved=[directory stringByAppendingPathComponent:@"fullcycle-moved.bin"];
+    [fm removeItemAtPath:copy error:nil];
+    [fm removeItemAtPath:moved error:nil];
+    NSError *copyError=nil;
+    BOOL copied=[fm copyItemAtPath:handlePath toPath:copy error:&copyError];
+    BOOL renamed=copied && [fm moveItemAtPath:copy toPath:moved error:&copyError];
+    [self check:renamed && [[NSData dataWithContentsOfFile:moved] isEqualToData:handlePayload]
+         label:@"NSFileManager copy/move/read file"];
+    [fm removeItemAtPath:moved error:nil];
+    NSString *unicode=[directory stringByAppendingPathComponent:@"全量验证-中文-🧪.txt"];
+    BOOL unicodeOK=[@"UNICODE_PATH" writeToFile:unicode atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [self check:unicodeOK && [[NSString stringWithContentsOfFile:unicode encoding:NSUTF8StringEncoding error:nil]
+                        isEqualToString:@"UNICODE_PATH"]
+         label:@"Unicode filename + Foundation path encoding"];
     NSString *coordinated=[directory stringByAppendingPathComponent:@"fullcycle-coordinated.txt"];
     [@"before-coordination" writeToFile:coordinated atomically:YES encoding:NSUTF8StringEncoding error:nil];
     NSFileCoordinator *coordinator=[[NSFileCoordinator alloc] initWithFilePresenter:nil];
@@ -224,6 +275,9 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     }];
     [self check:coordinateOK && !coordError label:@"NSFileCoordinator coordinated write"];
     NSDictionary *attributes=[fm attributesOfItemAtPath:bigFile error:nil];
+    NSData *mapped=[NSData dataWithContentsOfFile:bigFile options:NSDataReadingMappedIfSafe error:nil];
+    [self check:mapped.length==1024*1024 && [SPFingerprint(mapped) isEqualToString:priorHash]
+         label:@"NSData mapped read of 1 MiB persisted file"];
     [self line:[NSString stringWithFormat:@"FILE_ATTR fileProtection=%@ size=%@",
         attributes[NSFileProtectionKey] ?: @"not-reported",attributes[NSFileSize] ?: @"missing"]];
 }
@@ -313,6 +367,50 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     BOOL isLink=lstat(prefsDir.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode);
     [self line:[NSString stringWithFormat:@"PREFERENCES_DIRECTORY_SYMLINK=%@ (expected no)",
                   isLink?@"yes":@"no"]];
+}
+- (void)testNativeStores {
+    // CFPreferences may have a separate in-process cache. This probes its
+    // public API but never interprets native persistence as plugin recovery.
+    CFStringRef key=CFSTR("StorageProbe.FullCycle.CFPreferencesCounter");
+    CFPropertyListRef previous=CFPreferencesCopyAppValue(key,kCFPreferencesCurrentApplication);
+    NSInteger before=0;
+    if(previous && CFGetTypeID(previous)==CFNumberGetTypeID())
+        CFNumberGetValue((CFNumberRef)previous,kCFNumberNSIntegerType,&before);
+    if(previous) CFRelease(previous);
+    NSInteger after=before+1;
+    CFNumberRef value=CFNumberCreate(kCFAllocatorDefault,kCFNumberNSIntegerType,&after);
+    CFPreferencesSetAppValue(key,value,kCFPreferencesCurrentApplication);
+    CFRelease(value);
+    BOOL synchronized=CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+    CFPropertyListRef current=CFPreferencesCopyAppValue(key,kCFPreferencesCurrentApplication);
+    NSInteger observed=0;
+    if(current && CFGetTypeID(current)==CFNumberGetTypeID())
+        CFNumberGetValue((CFNumberRef)current,kCFNumberNSIntegerType,&observed);
+    if(current) CFRelease(current);
+    [self check:synchronized && observed==after label:@"CFPreferences write/synchronize/read (native-local)"];
+    [self record:@"cfPreferences" before:@(before) after:@(after) migrated:NO];
+
+    // Store a synthetic cache response offline. No network request is made.
+    NSURLRequest *request=[NSURLRequest requestWithURL:
+        [NSURL URLWithString:@"https://storageprobe.invalid/fullcycle-cached"]];
+    NSCachedURLResponse *old=[NSURLCache.sharedURLCache cachedResponseForRequest:request];
+    NSData *payload=[@"SideloadPersist synthetic cache" dataUsingEncoding:NSUTF8StringEncoding];
+    NSHTTPURLResponse *response=[[NSHTTPURLResponse alloc] initWithURL:request.URL
+        statusCode:200 HTTPVersion:@"HTTP/1.1"
+        headerFields:@{@"Cache-Control":@"public, max-age=604800"}];
+    NSCachedURLResponse *fresh=[[NSCachedURLResponse alloc] initWithResponse:response
+        data:payload userInfo:nil storagePolicy:NSURLCacheStorageAllowed];
+    [NSURLCache.sharedURLCache storeCachedResponse:fresh forRequest:request];
+    NSCachedURLResponse *retrieved=[NSURLCache.sharedURLCache cachedResponseForRequest:request];
+    [self check:[retrieved.data isEqualToData:payload] label:@"NSURLCache synthetic response (native cache)"];
+    [self record:@"urlCacheSHA256" before:SPFingerprint(old.data)
+         after:SPFingerprint(retrieved.data) migrated:NO];
+
+    NSString *tmpPath=[NSTemporaryDirectory() stringByAppendingPathComponent:@"storageprobe-fullcycle.txt"];
+    NSString *tmpBefore=[NSString stringWithContentsOfFile:tmpPath encoding:NSUTF8StringEncoding error:nil];
+    BOOL tmpOK=[@"synthetic-temp" writeToFile:tmpPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [self check:tmpOK label:@"NSTemporaryDirectory atomic write (not migrated)"];
+    [self record:@"tempMarker" before:tmpBefore after:@"synthetic-temp" migrated:NO];
 }
 - (void)testKeychain {
     NSDictionary *selector=@{
