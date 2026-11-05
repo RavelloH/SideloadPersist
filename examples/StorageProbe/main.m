@@ -2,13 +2,15 @@
 #import <Foundation/Foundation.h>
 #import <sqlite3.h>
 #import <CoreData/CoreData.h>
+#import <WebKit/WebKit.h>
 #import <fcntl.h>
 #import <sys/stat.h>
 #import <unistd.h>
 
-@interface StorageProbeController : UIViewController
+@interface StorageProbeController : UIViewController <WKNavigationDelegate>
 @property(nonatomic,strong) UITextView *output;
 @property(nonatomic,strong) NSMutableString *history;
+@property(nonatomic,strong) WKWebView *webKitProbe;
 @end
 
 @implementation StorageProbeController
@@ -44,7 +46,8 @@
     UIButton *run=[self button:@"运行存储 API 测试" action:@selector(runTests)];
     UIButton *copy=[self button:@"复制结果" action:@selector(copyResults)];
     UIButton *repeat=[self button:@"再次运行（验证持久化）" action:@selector(runTests)];
-    UIStackView *buttons=[[UIStackView alloc] initWithArrangedSubviews:@[run,repeat,copy]];
+    UIButton *webKit=[self button:@"研究 WebKit / Preferences 存储范围" action:@selector(runExtendedScope)];
+    UIStackView *buttons=[[UIStackView alloc] initWithArrangedSubviews:@[run,repeat,webKit,copy]];
     buttons.axis=UILayoutConstraintAxisVertical;
     buttons.spacing=10;
     self.output=[[UITextView alloc] init];
@@ -67,6 +70,49 @@
     ]];
     [self line:[NSString stringWithFormat:@"iOS=%@ bundle=%@",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier]];
     [self line:@"注入 dylib 后首次运行可能先显示持久化介绍页。关闭后测试。"];
+}
+- (void)runExtendedScope {
+    NSString *library=[NSHomeDirectory() stringByAppendingPathComponent:@"Library"];
+    NSArray<NSString *> *names=@[@"WebKit",@"Preferences",@"Cookies",@"Caches",@"Saved Application State"];
+    [self line:@"=== 扩展目录检查：本轮只读，不迁移系统目录 ==="];
+    for (NSString *name in names) {
+        NSString *p=[library stringByAppendingPathComponent:name];
+        BOOL isDirectory=NO;
+        BOOL exists=[[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&isDirectory];
+        NSArray<NSString *> *contents=exists && isDirectory ?
+            [[NSFileManager defaultManager] contentsOfDirectoryAtPath:p error:nil] : nil;
+        [self line:[NSString stringWithFormat:@"LIBRARY_SCOPE %@: exists=%@ entries=%lu",
+            name,exists?@"yes":@"no",(unsigned long)contents.count]];
+    }
+    NSString *prefs=[library stringByAppendingPathComponent:@"Preferences"];
+    NSString *prefsFile=[prefs stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@.plist",NSBundle.mainBundle.bundleIdentifier ?: @"unknown"]];
+    [self line:[NSString stringWithFormat:@"DEFAULTS_PLIST_PRESENT=%@ (current process may cache writes)",
+        [[NSFileManager defaultManager] fileExistsAtPath:prefsFile]?@"yes":@"no"]];
+    if (!self.webKitProbe) {
+        WKWebViewConfiguration *config=[WKWebViewConfiguration new];
+        config.websiteDataStore=WKWebsiteDataStore.defaultDataStore;
+        self.webKitProbe=[[WKWebView alloc] initWithFrame:CGRectMake(0,0,1,1) configuration:config];
+        self.webKitProbe.navigationDelegate=self;
+        self.webKitProbe.alpha=0.01;
+        [self.view addSubview:self.webKitProbe];
+    }
+    [self line:@"WEBKIT_TEST: loading local HTML using a stable base URL (no network navigation expected)"];
+    [self.webKitProbe loadHTMLString:@"<!doctype html><html><body>StorageProbe WebKit</body></html>"
+                                  baseURL:[NSURL URLWithString:@"https://storageprobe.invalid/"]];
+}
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    [self line:[NSString stringWithFormat:@"WEBKIT_NAVIGATION_ERROR=%@",error.localizedDescription]];
+}
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    NSString *script=@"(function(){try{var k='SideloadPersistProbe';var before=localStorage.getItem(k);var after=String((Number(before)||0)+1);localStorage.setItem(k,after);return JSON.stringify({before:before,after:after});}catch(e){return 'ERROR:'+String(e);}})()";
+    [webView evaluateJavaScript:script completionHandler:^(id value,NSError *error) {
+        [self line:[NSString stringWithFormat:@"WEBKIT_LOCALSTORAGE=%@ error=%@",
+                    value ?: @"none",error.localizedDescription ?: @"none"]];
+        NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/WebKit"];
+        [self line:[NSString stringWithFormat:@"WEBKIT_LIBRARY_DIR_EXISTS=%@",
+                    [[NSFileManager defaultManager] fileExistsAtPath:path] ? @"yes":@"no"]];
+    }];
 }
 - (void)runTests {
     self.history=[NSMutableString string];

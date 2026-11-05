@@ -1,6 +1,6 @@
 # SideloadPersist — iOS 数据持久化 dylib（实验性）
 
-**v0.8.1：目录级重定位 + 恢复增强测试。不依赖外部文件夹选择器，也不依赖证书的 Bundle ID 与 `application-identifier` 匹配。**
+**v0.9 开发版：目录级持久化 + Apple 风格首次介绍页 / 恢复完成页 + 扩展存储范围诊断。** 主存储仍不依赖外部文件夹选择器，也不依赖证书的 Bundle ID 与 `application-identifier` 匹配。
 
 ## 运行机制
 
@@ -26,7 +26,11 @@ App 沙盒/
 
 ## 首次介绍页
 
-完成同步初始化后，等 App 存在一个有效前台 Scene，自动以半屏 Sheet 展示一次介绍页：当前 App 在「文件」中的目录路径、打开「文件」、导入备份 ZIP、恢复说明和完成按钮。确认完成后静默运行，不驻留悬浮按钮或轮询监听。
+完成同步初始化后，等 App 存在一个有效前台 Scene，以 **仅 medium detent 的半屏 Sheet** 展示一次介绍页；不允许向上展开。包含大标题、SF Symbols 图标、功能介绍、文件目录、项目仓库及作者入口、独立四步恢复指南和备份 ZIP 导入。用户点击开始使用或向下关闭后，后续通常不再展示，也不驻留悬浮按钮或轮询监听。
+
+成功导入 ZIP 后，界面先尝试从半屏过渡至 large detent，再进入不可手势关闭的全屏完成页面，显示绿色成功图标与「退出 App」按钮，防止在下次冷启动应用恢复前继续操作。**按钮由用户主动触发 `exit(0)`，iOS 不提供公开的自行重启 API，因此用户仍需手动再次打开 App。** 这种主动退出可能被系统视为不正常退出；在正式版中应评估更自然的 UX。恢复包在退出前已被完整校验并持久暂存。
+
+如果存在尚未执行的 `restore-pending.txt`，即使之前关闭过介绍页，下一次显示时也会进入不可跳过的完成状态。这种 UI 限制只能阻止用户交互，不能完全暂停第三方 App 所有后台线程。
 
 「打开文件 App」尝试 `shareddocuments://`（非 Apple 公开 API，可能失效），失效时显示手动导航路径。文件夹在「文件」中的可见性依赖**签名后的 App Info.plist**：
 
@@ -62,7 +66,7 @@ ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP �
 GitHub Actions 自动生成（未签名）：
 
 - `SideloadPersist-ios-arm64-unsigned`：注入式 dylib；
-- `StorageProbe-unsigned-ipa`：测试 `NSFileManager`、`NSData`、`NSFileHandle`、POSIX `open/write/stat`、`stdio`、SQLite WAL、CoreData SQLite、NSUserDefaults；
+- `StorageProbe-unsigned-ipa`：测试 `NSFileManager`、`NSData`、`NSFileHandle`、POSIX `open/write/stat`、`stdio`、SQLite WAL、CoreData SQLite、NSUserDefaults；另加 **WebKit / Preferences 存储范围研究**按钮，枚举部分 Library 子目录是否存在、尝试 WKWebView `localStorage` 持久化。扩展测试不会搬移这两个系统目录，避免未经验证直接破坏 WebKit 或 cfprefsd。
 - `PickerProbe-unsigned-ipa`：保留的文件选择器兼容性测试。
 
 **StorageProbe 不自带 dylib。** 使用 LCSign 等工具注入 dylib、开启文件共享、签名安装，打开 StorageProbe 后按「运行存储 API 测试」，复制结果并在「文件」App 中确认 `SideloadPersist/Data/Application Support/StorageProbe` 下确实存在文件。新版输出 `SQLITE_ROWS`、`COREDATA_ROWS` 精确计数，以及 `PERSISTENT_DATA_MARKER`（随 Documents 数据恢复）和 `INSTALLATION_ID`（属于 UserDefaults，卸载重装后变化）。严格验证跨安装恢复时：备份前记录这些数值；重装后导入 ZIP、冷启动再运行，应该看到安装 ID 改变、数据标记恢复到旧值、两种数据库的记录数从旧值继续增加。不要直接在重要 App 上测试首次目录迁移。

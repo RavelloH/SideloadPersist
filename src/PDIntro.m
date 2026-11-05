@@ -356,7 +356,14 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     });
 }
 - (void)presentCompletion {
-    if(self.presentedViewController && ![self.presentedViewController isBeingDismissed]) return;
+    UIViewController *existing=self.presentedViewController;
+    if ([existing isKindOfClass:PDCompleteController.class]) return;
+    if (existing) {
+        // The document picker/action sheet may still be dismissing when ZIP
+        // extraction completes; transition only after it has fully closed.
+        [existing dismissViewControllerAnimated:NO completion:^{ [self presentCompletion]; }];
+        return;
+    }
     self.committed=YES;
     self.modalInPresentation=YES;
     if(@available(iOS 15.0,*)) {
