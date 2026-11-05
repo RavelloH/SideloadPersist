@@ -29,6 +29,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
 @interface PDGateController : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic,strong) UILabel *statusLabel;
 @property(nonatomic,strong) UIButton *chooseButton;
+@property(nonatomic,strong) UIButton *compatibilityButton;
 @end
 
 @interface PDGateManager : NSObject
@@ -197,7 +198,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     title.font=[UIFont boldSystemFontOfSize:27];
     title.textAlignment=NSTextAlignmentCenter;
     UILabel *body=[[UILabel alloc] init];
-    body.text=@"请选择独立于当前 App 的文件夹。\n建议：返回“浏览位置”，在 iCloud Drive 中创建一个专用目录。\n将在其中创建 Documents 子文件夹。";
+    body.text=@"必须选择外部文件夹，而不是当前 App 自己的文件夹。\n请返回“浏览位置”，在 iCloud Drive 创建或进入一个专用子文件夹，再点击“打开”。";
     body.textColor=UIColor.secondaryLabelColor;
     body.numberOfLines=0;
     body.textAlignment=NSTextAlignmentCenter;
@@ -210,14 +211,19 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     self.statusLabel.textAlignment=NSTextAlignmentCenter;
     UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];
     self.chooseButton=button;
-    [button setTitle:@"选择文件夹" forState:UIControlStateNormal];
+    [button setTitle:@"选择外部文件夹（标准）" forState:UIControlStateNormal];
     button.titleLabel.font=[UIFont boldSystemFontOfSize:18];
     [button addTarget:self action:@selector(chooseFolder) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *alternate = [UIButton buttonWithType:UIButtonTypeSystem];
+    [alternate setTitle:@"兼容模式重试" forState:UIControlStateNormal];
+    alternate.titleLabel.font=[UIFont systemFontOfSize:15];
+    [alternate addTarget:self action:@selector(chooseFolderCompatibility) forControlEvents:UIControlEventTouchUpInside];
+    self.compatibilityButton = alternate;
     UIButton *diagnostics=[UIButton buttonWithType:UIButtonTypeSystem];
     [diagnostics setTitle:@"查看诊断日志" forState:UIControlStateNormal];
     diagnostics.titleLabel.font=[UIFont systemFontOfSize:15];
     [diagnostics addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
-    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,button,diagnostics,self.statusLabel]];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,button,alternate,diagnostics,self.statusLabel]];
     stack.axis=UILayoutConstraintAxisVertical;
     stack.spacing=24;
     stack.alignment=UIStackViewAlignmentFill;
@@ -233,22 +239,55 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     PDPresentDiagnostics(self);
 }
 - (void)chooseFolder {
+    [self openFolderPickerUsingCompatibilityMode:NO];
+}
+- (void)chooseFolderCompatibility {
+    [self openFolderPickerUsingCompatibilityMode:YES];
+}
+- (void)openFolderPickerUsingCompatibilityMode:(BOOL)compatibility {
     if (s_choosing || s_validating) return;
-    PDLog(@"Opening directory picker");
     s_choosing = YES;
-    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
-        initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
+    self.statusLabel.text = compatibility ? @"已启动兼容模式，请选择外部文件夹。" : @"请选择 iCloud Drive 或其他独立位置的子目录。";
+    // Standard: Apple's documented folder-picker initializer and native presentation.
+    // Compatibility: legacy open-mode initializer and over-full-screen presentation,
+    // for diagnosing provider-specific or iOS 27 behavior. No sandbox bypass.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    UIDocumentPickerViewController *picker = compatibility
+      ? [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[UTTypeFolder.identifier]
+                                                        inMode:UIDocumentPickerModeOpen]
+      : [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder]];
+#pragma clang diagnostic pop
+    if (!picker) {
+        s_choosing = NO;
+        self.statusLabel.text = @"文件选择器初始化失败，请打开诊断日志。";
+        PDLog(@"Folder picker initialization returned nil, compatibility=%@",compatibility ? @"yes" : @"no");
+        return;
+    }
     picker.delegate=self;
     picker.allowsMultipleSelection=NO;
-    picker.modalPresentationStyle=UIModalPresentationFullScreen;
+    if (compatibility) picker.modalPresentationStyle=UIModalPresentationOverFullScreen;
+    PDLog(@"Opening folder picker; compatibility=%@ presentation=%ld mode=%ld",
+          compatibility ? @"yes" : @"no", (long)picker.modalPresentationStyle,
+          (long)picker.documentPickerMode);
     [self presentViewController:picker animated:YES completion:^{
-        PDLog(@"Directory picker presented");
+        PDLog(@"Directory picker presented; compatibility=%@",compatibility ? @"yes" : @"no");
     }];
+    // This does not simulate a button press: UIKit does not expose the native
+    // Open button action. It records that the picker is still pending.
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (weakSelf && s_choosing && weakSelf.presentedViewController == picker) {
+            PDLog(@"Folder picker still awaiting selection after 15s; no success or cancel callback yet; compatibility=%@",
+                  compatibility ? @"yes" : @"no");
+        }
+    });
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    PDLog(@"Directory picker cancelled");
+    PDLog(@"Directory picker cancelled; no directory URL granted");
     s_choosing=NO;
-    self.statusLabel.text=@"尚未选择文件夹，应用将保持在此页面。";
+    self.statusLabel.text=@"未收到选中目录。如“打开”无反应，请从“浏览位置”进入 iCloud Drive 的具体子文件夹；也可以试试兼容模式。";
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     PDLog(@"Picker returned %lu URL(s)",(unsigned long)urls.count);
@@ -258,6 +297,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     NSURL *root=urls.firstObject;
     if (!root) { s_validating=NO; self.statusLabel.text=@"未收到目录授权，请重试。"; return; }
     self.chooseButton.enabled=NO;
+    self.compatibilityButton.enabled=NO;
     self.statusLabel.text=@"正在验证文件夹访问权限……";
     __weak typeof(self) weakSelf=self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(8*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
@@ -276,6 +316,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
             else {
                 PDLog(@"Folder activation failed: %@",error);
                 strongSelf.chooseButton.enabled=YES;
+                strongSelf.compatibilityButton.enabled=YES;
                 strongSelf.statusLabel.text=[NSString stringWithFormat:@"访问失败：%@。请换一个文件夹。",error.localizedDescription ?: @"未知错误"];
             }
         });
