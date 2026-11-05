@@ -86,10 +86,43 @@ int main(int argc,char **argv) {
             verify(![prefs boolForKey:@"StorageProbe.HookBoolean"],@"NSUserDefaults remove masked");
             verify(![[prefs dictionaryRepresentation] objectForKey:@"StorageProbe.HookBoolean"],
                 @"NSUserDefaults dictionaryRepresentation also masks removed key");
+            // A removed managed key falls back to registered defaults, rather
+            // than silently resurfacing stale values from the native plist.
+            [prefs registerDefaults:@{@"StorageProbe.Registered":@"registration-value"}];
+            [prefs setObject:@"override" forKey:@"StorageProbe.Registered"];
+            verify([[prefs stringForKey:@"StorageProbe.Registered"] isEqualToString:@"override"],
+                   @"managed value overrides registration default");
+            [prefs removeObjectForKey:@"StorageProbe.Registered"];
+            verify([[prefs stringForKey:@"StorageProbe.Registered"] isEqualToString:@"registration-value"],
+                   @"removed key exposes registered fallback");
+            verify([[prefs dictionaryRepresentation][@"StorageProbe.Registered"] isEqualToString:@"registration-value"],
+                   @"dictionaryRepresentation preserves registration fallback");
+            [prefs setVolatileDomain:@{@"StorageProbe.HookCounter":@99} forName:NSArgumentDomain];
+            verify([prefs integerForKey:@"StorageProbe.HookCounter"]==99,
+                   @"NSArgumentDomain overrides managed app value");
+            verify([[prefs dictionaryRepresentation][@"StorageProbe.HookCounter"] integerValue]==99,
+                   @"dictionaryRepresentation respects argument precedence");
+            [prefs removeVolatileDomainForName:NSArgumentDomain];
+            verify([prefs integerForKey:@"StorageProbe.HookCounter"]==8,
+                   @"managed value visible after removing argument override");
             verify(PDPreferencesDomainExists(domain),@"hook-backed live domain exists");
             verify([PDPreferencesValues(domain)[@"StorageProbe.HookCounter"] integerValue]==8,
                 @"native hook wrote live backing file");
             NSLog(@"Hook verified: %@",PDPreferencesHookStatus());
+        } else if(strcmp(argv[1],"fault")==0) {
+            verify(PDPreferencesInstallHook(),@"hook installed for injected storage failure");
+            verify(PDPreferencesIntegrityOK(),@"fresh installation has no integrity warning");
+            NSString *file=PDPreferencesDomainFile(domain);
+            NSFileManager *fm=NSFileManager.defaultManager;
+            verify([fm removeItemAtPath:file error:nil],@"remove managed domain file for fault injection");
+            verify([fm createDirectoryAtPath:file withIntermediateDirectories:NO
+                  attributes:nil error:nil],@"simulate corrupt domain file path");
+            [NSUserDefaults.standardUserDefaults setObject:@"fallback" forKey:@"StorageProbe.Fault"];
+            verify(!PDPreferencesIntegrityOK(),@"native fallback marks backup integrity unsafe");
+            NSString *warning=[PDStorageRoot() stringByAppendingPathComponent:@"preferences-integrity-warning.json"];
+            verify([fm fileExistsAtPath:warning],@"integrity warning saved outside managed domain");
+            verify([[PDPreferencesIntegrityWarning() lowercaseString] containsString:@"备份"],
+                   @"backup user-facing warning is actionable");
         } else verify(NO,@"unknown test mode");
     }
     return 0;
