@@ -65,8 +65,9 @@ static NSString *PDArchiveFilename(mz_zip_archive *zip, mz_uint idx) {
     if (!buffer) return nil;
     mz_zip_reader_get_filename(zip,idx,buffer,len+1);
     size_t realLen=strlen(buffer);
-    // Reject embedded-NUL names instead of silently truncating to a benign prefix.
-    NSString *result=(realLen==len) ? [[NSString alloc] initWithBytes:buffer length:realLen encoding:NSUTF8StringEncoding] : nil;
+    // miniz_get_filename() returns filename length INCLUDING the final NUL.
+    // Reject embedded NULs instead of silently truncating to a benign prefix.
+    NSString *result=(realLen+1==len) ? [[NSString alloc] initWithBytes:buffer length:realLen encoding:NSUTF8StringEncoding] : nil;
     free(buffer);
     return result;
 }
