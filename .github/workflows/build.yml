@@ -1,7 +1,7 @@
 name: RC candidate validation (unsigned iOS builds)
 on:
   push:
-    branches: [main]
+    branches: [main, 'rc/**']
   workflow_dispatch:
     inputs:
       matched_bundle_id:
