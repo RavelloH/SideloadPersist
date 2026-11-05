@@ -203,3 +203,5 @@ Documents/SideloadPersist/Data/Application Support/
 遇到原目录和目标都含数据、外来的符号链接或系统拒绝目录操作时，仅保留原状并记录原因；不自动合并或覆盖。新建目录一般在下一次冷启动时发现，研发测试可通过 \`PDStorageRefreshOptionalMappings()\` 在同一轮一键综合测试里立即触发刷新。
 
 **验收范围**：macOS CI 增加首次迁移、冲突拒绝、ZIP v3 冷启动恢复、重装后缺少原符号链接时的重新建立、旧数据保留和系统目录未被触碰的测试。iOS 真机的自建目录迁移仍需实测，不应将其视为已验证的全量 Library 数据备份能力。
+
+StorageProbe 的下一次单轮真机综合测试还将覆盖 `Library/StorageProbeCustomPersistent`（自动识别）与 `Library/ThirdPartyState`（通过 Info.plist 明确列入）这两种来源，并对恢复前后标记进行精确比较。两者均位于原有 Application Support 备份范围中，无需引入新的 ZIP 版本。
