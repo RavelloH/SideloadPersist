@@ -104,6 +104,18 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
                     key,expected ?: @"missing",before ?: @"missing"]];
     }
 }
+- (void)researchMetric:(NSString *)key before:(id)before after:(id)after {
+    [self line:[NSString stringWithFormat:@"RESEARCH_METRIC %@ before=%@ after=%@",
+        key,before ?: @"missing",after ?: @"missing"]];
+    if(after) self.values[key]=after;
+    if(self.verifying) {
+        id expected=[self.baseline[@"values"] isKindOfClass:NSDictionary.class] ?
+            self.baseline[@"values"][key] : nil;
+        [self line:[NSString stringWithFormat:@"RESEARCH_REINSTALL %@ expected=%@ observed=%@ matched=%@",
+            key,expected ?: @"missing",before ?: @"missing",
+            (expected && [expected isEqual:before])?@"yes":@"no"]];
+    }
+}
 - (void)start {
     NSFileManager *fm=NSFileManager.defaultManager;
     NSString *home=NSHomeDirectory();
@@ -111,19 +123,24 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSString *data=[self.root stringByAppendingPathComponent:@"Data/Application Support/StorageProbe"];
     self.snapshotPath=[data stringByAppendingPathComponent:@"fullcycle-baseline.json"];
     [fm createDirectoryAtPath:data withIntermediateDirectories:YES attributes:nil error:nil];
-    NSUserDefaults *prefs=NSUserDefaults.standardUserDefaults;
-    NSString *install=[prefs stringForKey:@"StorageProbe.FullCycle.InstallationID"];
+    // Preferences are now migrated, so installation identity must live in
+    // Caches (intentionally NOT migrated). This is a reliable reinstall marker.
+    NSString *identityFile=[home stringByAppendingPathComponent:@"Library/Caches/StorageProbe-fullcycle-installation.txt"];
+    NSString *install=[[NSString stringWithContentsOfFile:identityFile encoding:NSUTF8StringEncoding error:nil]
+        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if(!install.length) {
         install=NSUUID.UUID.UUIDString;
-        [prefs setObject:install forKey:@"StorageProbe.FullCycle.InstallationID"];
+        [fm createDirectoryAtPath:[identityFile stringByDeletingLastPathComponent]
+            withIntermediateDirectories:YES attributes:nil error:nil];
+        [install writeToFile:identityFile atomically:YES encoding:NSUTF8StringEncoding error:nil];
     }
     self.installationID=install;
     id loaded=SPJSON(self.snapshotPath);
     self.baseline=[loaded isKindOfClass:NSDictionary.class] &&
-        [loaded[@"format"] isEqual:@"StorageProbe.FullCycle.V1"] ? loaded : nil;
+        [loaded[@"format"] isEqual:@"StorageProbe.FullCycle.V2"] ? loaded : nil;
     NSString *previous=self.baseline[@"installationID"];
     self.verifying=(previous.length && ![previous isEqualToString:install]);
-    [self line:@"===== ONE-TAP FULL STORAGE CYCLE / v1 ====="];
+    [self line:@"===== ONE-TAP FULL STORAGE CYCLE / v2 (Preferences) ====="];
     [self line:[NSString stringWithFormat:@"PHASE=%@ installation=%@ baselineInstallation=%@",
         self.verifying?@"RESTORED_INSTALLATION_VERIFY":@"GENERATE_BACKUP_BASELINE",
         install,previous ?: @"none"]];
@@ -148,7 +165,14 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     }
     [self line:[NSString stringWithFormat:@"RESTORE_RECEIPT result=%@ scopes=%@",
         receipt[@"result"] ?: @"absent",receipt[@"scopes"] ?: @[]]];
-    for(NSString *scope in @[@"Application Support",@"WebKit",@"Cookies"]) {
+    NSString *readme=[NSString stringWithContentsOfFile:[self.root stringByAppendingPathComponent:@"README.md"]
+        encoding:NSUTF8StringEncoding error:nil];
+    [self check:([readme containsString:@"RavelloH"] &&
+                 [readme containsString:@"github.com/RavelloH/SideloadPersist"] &&
+                 [readme containsString:@"Library/Preferences"])
+         label:@"SideloadPersist README.md created with author repository and directory mappings"];
+    [self enumerateLibraryScopeCandidates];
+    for(NSString *scope in @[@"Application Support",@"WebKit",@"Cookies",@"Preferences"]) {
         NSString *original=[home stringByAppendingPathComponent:
             [@"Library" stringByAppendingPathComponent:scope]];
         NSString *destination=[self.root stringByAppendingPathComponent:
@@ -177,6 +201,30 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
             [self complete:NO];
         }
     });
+}
+- (void)enumerateLibraryScopeCandidates {
+    NSString *library=[NSHomeDirectory() stringByAppendingPathComponent:@"Library"];
+    NSArray<NSString *> *entries=[NSFileManager.defaultManager contentsOfDirectoryAtPath:library error:nil];
+    NSSet *mapped=[NSSet setWithArray:@[@"Application Support",@"WebKit",@"Cookies",@"Preferences"]];
+    NSSet *transient=[NSSet setWithArray:@[@"Caches",@"Saved Application State"]];
+    for(NSString *name in [entries sortedArrayUsingSelector:@selector(compare:)]) {
+        NSString *path=[library stringByAppendingPathComponent:name];
+        BOOL isDir=NO;
+        if(![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDir] || !isDir) continue;
+        NSString *classification=[mapped containsObject:name] ? @"mapped" :
+            ([transient containsObject:name] ? @"transient" : @"unmapped-needs-research");
+        [self line:[NSString stringWithFormat:@"LIBRARY_DISCOVERY %@ category=%@",name,classification]];
+    }
+    // A synthetic custom Library directory identifies an important scope
+    // not covered by the four static mappings. It is a diagnostic, not a FAIL.
+    NSString *custom=[library stringByAppendingPathComponent:@"StorageProbeCustomPersistent"];
+    [NSFileManager.defaultManager createDirectoryAtPath:custom withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *marker=[custom stringByAppendingPathComponent:@"marker.txt"];
+    NSString *old=[NSString stringWithContentsOfFile:marker encoding:NSUTF8StringEncoding error:nil];
+    NSString *value=old ?: NSUUID.UUID.UUIDString;
+    BOOL wrote=[value writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [self check:wrote label:@"Library custom directory synthetic marker writable"];
+    [self researchMetric:@"customLibraryMarker" before:old after:value];
 }
 - (void)testFiles:(NSString *)directory {
     NSFileManager *fm=NSFileManager.defaultManager;
@@ -343,16 +391,17 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSInteger before=[prefs integerForKey:@"StorageProbe.FullCycle.Prefs"];
     [prefs setInteger:before+1 forKey:@"StorageProbe.FullCycle.Prefs"];
     [self check:[prefs integerForKey:@"StorageProbe.FullCycle.Prefs"]==before+1
-         label:@"NSUserDefaults read/write (not redirected)"];
+         label:@"NSUserDefaults read/write (Preferences relocated)"];
     CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
-    [self record:@"userDefaults" before:@(before) after:@(before+1) migrated:NO];
+    [self record:@"userDefaults" before:@(before) after:@(before+1) migrated:YES];
     NSUserDefaults *suite=[[NSUserDefaults alloc] initWithSuiteName:@"com.ravelloh.storageprobe.fullcycle.suite"];
     if(suite) {
         NSInteger original=[suite integerForKey:@"StorageProbe.FullCycle.SuiteCounter"];
         [suite setInteger:original+1 forKey:@"StorageProbe.FullCycle.SuiteCounter"];
         [self check:[suite integerForKey:@"StorageProbe.FullCycle.SuiteCounter"]==original+1
-             label:@"NSUserDefaults custom suite read/write (native-local)"];
-        [self record:@"defaultsSuite" before:@(original) after:@(original+1) migrated:NO];
+             label:@"NSUserDefaults custom suite read/write (Preferences relocated)"];
+        [suite synchronize];
+        [self record:@"defaultsSuite" before:@(original) after:@(original+1) migrated:YES];
     } else [self skip:@"NSUserDefaults custom suite unavailable"];
 
     NSString *cache=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/StorageProbe-fullcycle.bin"];
@@ -365,7 +414,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSString *prefsDir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Preferences"];
     struct stat st={0};
     BOOL isLink=lstat(prefsDir.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode);
-    [self line:[NSString stringWithFormat:@"PREFERENCES_DIRECTORY_SYMLINK=%@ (expected no)",
+    [self line:[NSString stringWithFormat:@"PREFERENCES_DIRECTORY_SYMLINK=%@ (expected yes)",
                   isLink?@"yes":@"no"]];
 }
 - (void)testNativeStores {
@@ -388,7 +437,27 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         CFNumberGetValue((CFNumberRef)current,kCFNumberNSIntegerType,&observed);
     if(current) CFRelease(current);
     [self check:synchronized && observed==after label:@"CFPreferences write/synchronize/read (native-local)"];
-    [self record:@"cfPreferences" before:@(before) after:@(after) migrated:NO];
+    [self record:@"cfPreferences" before:@(before) after:@(after) migrated:YES];
+
+    // Foundation's shared HTTP cookie store is distinct from WKHTTPCookieStore.
+    // Its cross-install behavior is still under investigation, so report it
+    // without making the entire full-cycle baseline fail if it is absent.
+    NSURL *cookieURL=[NSURL URLWithString:@"https://storageprobe.invalid/"];
+    NSHTTPCookieStorage *cookieStore=NSHTTPCookieStorage.sharedHTTPCookieStorage;
+    NSInteger oldCookie=0;
+    for(NSHTTPCookie *cookie in [cookieStore cookiesForURL:cookieURL] ?: @[]) {
+        if([cookie.name isEqualToString:@"StorageProbeFoundationCookie"])
+            oldCookie=cookie.value.integerValue;
+    }
+    NSHTTPCookie *foundationCookie=[NSHTTPCookie cookieWithProperties:@{
+        NSHTTPCookieName:@"StorageProbeFoundationCookie",
+        NSHTTPCookieValue:[NSString stringWithFormat:@"%ld",(long)(oldCookie+1)],
+        NSHTTPCookieDomain:@"storageprobe.invalid",
+        NSHTTPCookiePath:@"/",
+        NSHTTPCookieExpires:[NSDate dateWithTimeIntervalSinceNow:30*86400]
+    }];
+    if(foundationCookie) [cookieStore setCookie:foundationCookie];
+    [self researchMetric:@"foundationCookie" before:@(oldCookie) after:@(oldCookie+1)];
 
     // Store a synthetic cache response offline. No network request is made.
     NSURLRequest *request=[NSURLRequest requestWithURL:
@@ -558,7 +627,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     self.finished=YES;
     NSString *phase=self.verifying ? @"RESTORE_VERIFICATION" : @"PRE_BACKUP_BASELINE";
     NSDictionary *snapshot=@{
-        @"format":@"StorageProbe.FullCycle.V1",
+        @"format":@"StorageProbe.FullCycle.V2",
         @"installationID":self.installationID ?: @"none",
         @"capturedAt":@([[NSDate date] timeIntervalSince1970]),
         @"values":[self.values copy],

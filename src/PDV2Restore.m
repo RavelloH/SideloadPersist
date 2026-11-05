@@ -41,7 +41,7 @@ static BOOL PDV2Move(NSString *old,NSString *to) {
     return NO;
 }
 static BOOL PDV2ValidScope(NSString *value) {
-    return [@[@"Application Support",@"WebKit",@"Cookies"] containsObject:value];
+    return [@[@"Application Support",@"WebKit",@"Cookies",@"Preferences"] containsObject:value];
 }
 static BOOL PDV2PreflightScope(NSString *name,NSString *root,NSString *directory,NSString *backup) {
     NSString *stage=[directory stringByAppendingPathComponent:name];
@@ -106,17 +106,22 @@ BOOL PDV2ApplyPendingRestore(NSString *identifier) {
     id decoded=bytes ? [NSJSONSerialization JSONObjectWithData:bytes options:0 error:&error] : nil;
     if(![decoded isKindOfClass:NSDictionary.class]) return NO;
     NSDictionary *plan=decoded;
-    if(![plan[@"format"] isEqualToString:@"SideloadPersist.Restore.V2"] ||
+    if(!([plan[@"format"] isEqualToString:@"SideloadPersist.Restore.V2"] ||
+         [plan[@"format"] isEqualToString:@"SideloadPersist.Restore.V3"]) ||
        ![plan[@"id"] isEqualToString:identifier] ||
        ![plan[@"scopes"] isKindOfClass:NSArray.class]) return NO;
     NSArray *scopes=plan[@"scopes"];
-    if(!scopes.count || scopes.count>3 || ![scopes containsObject:@"Application Support"]) return NO;
+    if(!scopes.count || scopes.count>4 || ![scopes containsObject:@"Application Support"]) return NO;
     NSMutableSet *unique=[NSMutableSet set];
     for(id scope in scopes) {
         if(![scope isKindOfClass:NSString.class] || !PDV2ValidScope(scope) ||
            [unique containsObject:scope]) return NO;
         [unique addObject:scope];
     }
+    if([plan[@"format"] isEqualToString:@"SideloadPersist.Restore.V3"] &&
+       ![unique containsObject:@"Preferences"]) return NO;
+    if([plan[@"format"] isEqualToString:@"SideloadPersist.Restore.V2"] &&
+       [unique containsObject:@"Preferences"]) return NO;
     NSString *stageRoot=[stageDir stringByAppendingPathComponent:@"Data"];
     NSString *backupRoot=[[[root stringByAppendingPathComponent:@"Backups"]
                            stringByAppendingPathComponent:identifier] stringByAppendingPathComponent:@"Data"];
@@ -162,7 +167,7 @@ BOOL PDV2ApplyPendingRestore(NSString *identifier) {
     }
     {
     NSDictionary *receipt=@{
-        @"format":@"SideloadPersist.RestoreReceipt.V2",
+        @"format":[scopes containsObject:@"Preferences"] ? @"SideloadPersist.RestoreReceipt.V3" : @"SideloadPersist.RestoreReceipt.V2",
         @"id":identifier,
         @"scopes":scopes,
         @"completedAt":@([[NSDate date] timeIntervalSince1970]),

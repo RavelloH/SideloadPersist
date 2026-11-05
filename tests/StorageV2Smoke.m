@@ -27,13 +27,13 @@ static void makeUnsupportedArchive(NSString *path) {
     mz_zip_archive zip={0};
     check(mz_zip_writer_init_file(&zip,path.fileSystemRepresentation,0),@"create unsupported ZIP");
     for(NSString *name in @[@"SideloadPersist/Data/Application Support/file.txt",
-                           @"SideloadPersist/Data/Preferences/config.plist"]) {
+                           @"SideloadPersist/Data/Unsupported/config.plist"]) {
         check(mz_zip_writer_add_mem(&zip,name.UTF8String,"X",1,MZ_BEST_SPEED),@"add unsupported scope fixture");
     }
     check(mz_zip_writer_finalize_archive(&zip),@"finalize unsupported ZIP");
     mz_zip_writer_end(&zip);
 }
-static void makeArchive(NSString *path,BOOL omitCookies) {
+static void makeArchive(NSString *path,BOOL omitCookies,BOOL withPreferences) {
     mz_zip_archive zip={0};
     check(mz_zip_writer_init_file(&zip,path.fileSystemRepresentation,0),@"create v2 ZIP");
     NSMutableDictionary<NSString *,NSString *> *entries=[@{
@@ -44,6 +44,10 @@ static void makeArchive(NSString *path,BOOL omitCookies) {
         @"SideloadPersist/Backups/unrelated.txt":@"MUST_NOT_IMPORT",
         @"__MACOSX/SideloadPersist/Data/WebKit/._localstorage.db":@"MAC_METADATA"
     } mutableCopy];
+    if(withPreferences) {
+        entries[@"SideloadPersist/manifest.json"]=@"{\"format\":\"SideloadPersist.Directory.V3\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\",\"Preferences\"]}";
+        entries[@"SideloadPersist/Data/Preferences/testprefs.plist"]=@"PREF_RESTORED";
+    }
     if(omitCookies) [entries removeObjectForKey:@"SideloadPersist/Data/Cookies/Cookies.binarycookies"];
     for(NSString *name in entries) {
         NSData *data=[entries[name] dataUsingEncoding:NSUTF8StringEncoding];
@@ -62,6 +66,7 @@ int main(int argc,char **argv) {
         NSString *app=[data stringByAppendingPathComponent:@"Application Support"];
         NSString *web=[data stringByAppendingPathComponent:@"WebKit"];
         NSString *cookie=[data stringByAppendingPathComponent:@"Cookies"];
+        NSString *prefsDir=[data stringByAppendingPathComponent:@"Preferences"];
         NSString *pending=[root stringByAppendingPathComponent:@"restore-pending.txt"];
         NSFileManager *fm=NSFileManager.defaultManager;
         if(strcmp(argv[1],"prepare-fresh")==0) {
@@ -73,8 +78,16 @@ int main(int argc,char **argv) {
                   @"fresh install auto-mounts WebKit without opt-in");
             check(lstat(sourceCookies.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),
                   @"fresh install auto-mounts Cookies without opt-in");
+            NSString *sourcePrefs=[home stringByAppendingPathComponent:@"Library/Preferences"];
+            check(lstat(sourcePrefs.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),
+                  @"fresh install auto-mounts Preferences without opt-in");
+            NSString *readme=readFile([root stringByAppendingPathComponent:@"README.md"]);
+            check([readme containsString:@"RavelloH"] &&
+                  [readme containsString:@"github.com/RavelloH/SideloadPersist"] &&
+                  [readme containsString:@"Data/Preferences"] &&
+                  [readme containsString:@"Library/Preferences"],@"README automatically documents all mappings and project metadata");
             NSString *zip=[home stringByAppendingPathComponent:@"multi.zip"];
-            makeArchive(zip,NO);
+            makeArchive(zip,NO,NO);
             NSError *error=nil;
             NSString *id=PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error);
             check(id.length==36,[NSString stringWithFormat:@"fresh app accepts v2 ZIP without markers: %@",error]);
@@ -93,22 +106,23 @@ int main(int argc,char **argv) {
             check(PDStorageBootstrap()==PDStorageStateRecovered,@"bootstrap new sandbox for v2");
             put([home stringByAppendingPathComponent:@"Library/WebKit/localstorage.db"],@"WEB_OLD");
             put([home stringByAppendingPathComponent:@"Library/Cookies/Cookies.binarycookies"],@"COOKIE_OLD");
-            check(PDRelocateWebKitAndCookies(home,root),@"repeat scope mounting is idempotent");
+            put([home stringByAppendingPathComponent:@"Library/Preferences/testprefs.plist"],@"PREF_OLD");
+            check(PDRelocateExtendedScopes(home,root),@"repeat extended scope mounting is idempotent");
             put([app stringByAppendingPathComponent:@"test.sqlite"],@"APP_OLD");
             NSString *unsupported=[home stringByAppendingPathComponent:@"unsupported.zip"];
             makeUnsupportedArchive(unsupported);
             NSError *unsupportedError=nil;
             check(!PDArchiveStageZIP([NSURL fileURLWithPath:unsupported],&unsupportedError),
-                  @"unrecognized Data/Preferences scope rejected instead of silently lost");
+                  @"unrecognized Data/Unsupported scope rejected instead of silently lost");
             check(![fm fileExistsAtPath:pending],@"reject does not create pending restore");
             NSString *incomplete=[home stringByAppendingPathComponent:@"incomplete.zip"];
-            makeArchive(incomplete,YES);
+            makeArchive(incomplete,YES,YES);
             NSError *incompleteError=nil;
             check(!PDArchiveStageZIP([NSURL fileURLWithPath:incomplete],&incompleteError),
                   @"missing declared Cookie scope rejected before staging");
             check(![fm fileExistsAtPath:pending],@"incomplete backup did not arm restore");
             NSString *zip=[home stringByAppendingPathComponent:@"multi.zip"];
-            makeArchive(zip,NO);
+            makeArchive(zip,NO,YES);
             check(PDV2ZIPHasExtraScopes([NSURL fileURLWithPath:zip]),@"v2 ZIP auto-detected");
             NSError *error=nil;
             NSString *identifier=PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error);
@@ -122,6 +136,12 @@ int main(int argc,char **argv) {
                  @"existing WebKit data still authoritative before cold restart");
             check([readFile([cookie stringByAppendingPathComponent:@"Cookies.binarycookies"]) isEqualToString:@"COOKIE_OLD"],
                  @"existing Cookie data still authoritative before cold restart");
+            check([readFile([prefsDir stringByAppendingPathComponent:@"testprefs.plist"]) isEqualToString:@"PREF_OLD"],
+                 @"existing Preferences data still authoritative before cold restart");
+            NSString *userReadme=[root stringByAppendingPathComponent:@"README.md"];
+            NSString *contents=readFile(userReadme);
+            check([contents containsString:@"Data/Preferences"],@"v3 README lists Preferences mapping");
+            put(userReadme,[contents stringByAppendingString:@"\nCUSTOM README NOTE FROM USER\n"]);
             check(![fm fileExistsAtPath:[stage stringByAppendingPathComponent:@"WebKit/._localstorage.db"]],
                  @"AppleDouble metadata excluded from v2 stage");
             check(![fm fileExistsAtPath:[stage stringByAppendingPathComponent:@"Backups"]],
@@ -141,17 +161,21 @@ int main(int argc,char **argv) {
             NSData *receiptData=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"restore-last.json"]];
             NSDictionary *receipt=receiptData ? [NSJSONSerialization JSONObjectWithData:receiptData options:0 error:nil] : nil;
             check([receipt[@"result"] isEqualToString:@"committed"],@"v2 restore receipt marked committed");
-            check([receipt[@"scopes"] count]==3,@"v2 receipt records all restored scopes");
+            check([receipt[@"scopes"] count]==4,@"v3 receipt records all four restored scopes");
             NSData *manifestBytes=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"manifest.json"]];
             NSDictionary *manifest=manifestBytes ? [NSJSONSerialization JSONObjectWithData:manifestBytes options:0 error:nil] : nil;
-            check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V2"],@"manifest auto-upgrades to V2 when links verified");
-            check([manifest[@"scopes"] count]==3,@"manifest enumerates all three verified scopes");
+            check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V3"],@"manifest auto-upgrades to V3 when Preferences link verified");
+            check([manifest[@"scopes"] count]==4,@"manifest enumerates all four verified scopes");
             check([readFile([app stringByAppendingPathComponent:@"test.sqlite"]) isEqualToString:@"APP_RESTORED"],
                 @"Application Support replaced with v2 copy");
             check([readFile([web stringByAppendingPathComponent:@"localstorage.db"]) isEqualToString:@"WEB_RESTORED"],
                 @"WebKit replaced with v2 copy");
             check([readFile([cookie stringByAppendingPathComponent:@"Cookies.binarycookies"]) isEqualToString:@"COOKIE_RESTORED"],
-                @"Cookies replaced with v2 copy");
+                @"Cookies replaced with v3 copy");
+            check([readFile([prefsDir stringByAppendingPathComponent:@"testprefs.plist"]) isEqualToString:@"PREF_RESTORED"],
+                @"Preferences replaced with v3 copy");
+            check([readFile([root stringByAppendingPathComponent:@"README.md"]) containsString:@"CUSTOM README NOTE FROM USER"],
+                @"user-edited README preserved across bootstrap and restore");
             NSArray *ids=[fm contentsOfDirectoryAtPath:[root stringByAppendingPathComponent:@"Backups"] error:nil];
             check(ids.count==1,@"v2 backup retained");
             NSString *backup=[root stringByAppendingPathComponent:
@@ -162,6 +186,8 @@ int main(int argc,char **argv) {
                 @"backup preserves prior WebKit");
             check([readFile([backup stringByAppendingPathComponent:@"Cookies/Cookies.binarycookies"]) isEqualToString:@"COOKIE_OLD"],
                 @"backup preserves prior Cookies");
+            check([readFile([backup stringByAppendingPathComponent:@"Preferences/testprefs.plist"]) isEqualToString:@"PREF_OLD"],
+                @"backup preserves prior Preferences");
             NSLog(@"All v2 restore tests passed.");
         } else if(strcmp(argv[1],"apply-rollback")==0) {
             // The test-specific failure gate in PDV2Restore fails after parking
@@ -175,6 +201,8 @@ int main(int argc,char **argv) {
                 @"WebKit rolled back");
             check([readFile([cookie stringByAppendingPathComponent:@"Cookies.binarycookies"]) isEqualToString:@"COOKIE_OLD"],
                 @"Cookies not altered after failure");
+            check([readFile([prefsDir stringByAppendingPathComponent:@"testprefs.plist"]) isEqualToString:@"PREF_OLD"],
+                @"Preferences not altered after failure");
             NSLog(@"All v2 rollback tests passed.");
         } else {
             check(NO,@"unknown mode");

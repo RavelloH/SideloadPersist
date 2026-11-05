@@ -5,7 +5,7 @@
 #import <TargetConditionals.h>
 
 static NSArray<NSString *> *PDV2Scopes(void) {
-    return @[@"Application Support", @"WebKit", @"Cookies"];
+    return @[@"Application Support", @"WebKit", @"Cookies", @"Preferences"];
 }
 static NSString *PDV2ErrorDomain=@"SideloadPersist.MultiRestore";
 static NSString *PDV2Name(mz_zip_archive *zip,mz_uint index) {
@@ -102,7 +102,7 @@ BOOL PDV2ZIPHasExtraScopes(NSURL *url) {
             NSString *name=PDV2Name(&zip,i);
             NSString *scope=nil;
             if(name && !PDV2IsMetadata(name) && PDV2Relative(name,&scope) &&
-               ([scope isEqualToString:@"WebKit"] || [scope isEqualToString:@"Cookies"])) {
+               ([scope isEqualToString:@"WebKit"] || [scope isEqualToString:@"Cookies"] || [scope isEqualToString:@"Preferences"])) {
                 found=YES; break;
             }
         }
@@ -163,9 +163,10 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
             if(buffer) mz_free(buffer);
             NSDictionary *metadata=json ? [NSJSONSerialization JSONObjectWithData:json options:0 error:nil] : nil;
             if([metadata isKindOfClass:NSDictionary.class] &&
-               [metadata[@"format"] isEqualToString:@"SideloadPersist.Directory.V2"]) {
+               ([metadata[@"format"] isEqualToString:@"SideloadPersist.Directory.V2"] ||
+                [metadata[@"format"] isEqualToString:@"SideloadPersist.Directory.V3"])) {
                 NSArray *declared=metadata[@"scopes"];
-                if(![declared isKindOfClass:NSArray.class] || !declared.count || declared.count>3) {
+                if(![declared isKindOfClass:NSArray.class] || !declared.count || declared.count>4) {
                     PDV2Fail(error,13,@"备份清单中的目录列表无效");goto invalid;
                 }
                 NSMutableSet *values=[NSMutableSet set];
@@ -210,8 +211,9 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
         PDV2Fail(error,15,@"备份 ZIP 中的目录与清单声明不一致，已拒绝不完整恢复");goto invalid;
     }
     if(![scopes containsObject:@"Application Support"] ||
-       !([scopes containsObject:@"WebKit"] || [scopes containsObject:@"Cookies"]) || !files) {
-        PDV2Fail(error,8,@"v2 备份必须包含 Application Support 和至少一个扩展目录的实际文件");goto invalid;
+       !([scopes containsObject:@"WebKit"] || [scopes containsObject:@"Cookies"] ||
+         [scopes containsObject:@"Preferences"]) || !files) {
+        PDV2Fail(error,8,@"多目录备份必须包含 Application Support 和至少一个扩展目录的实际文件");goto invalid;
     }
     if(![NSFileManager.defaultManager createDirectoryAtPath:
            [directory stringByAppendingPathComponent:@"Data"] withIntermediateDirectories:YES
@@ -243,7 +245,7 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
     {
         NSMutableArray<NSString *> *ordered=[NSMutableArray array];
         for(NSString *scope in PDV2Scopes()) if([scopes containsObject:scope]) [ordered addObject:scope];
-        NSDictionary *plan=@{@"format":@"SideloadPersist.Restore.V2",
+        NSDictionary *plan=@{@"format":[scopes containsObject:@"Preferences"] ? @"SideloadPersist.Restore.V3" : @"SideloadPersist.Restore.V2",
                               @"id":identifier, @"scopes":ordered, @"unpackedBytes":@(total),
                               @"fileCount":@(files)};
         NSData *json=[NSJSONSerialization dataWithJSONObject:plan options:NSJSONWritingPrettyPrinted error:error];

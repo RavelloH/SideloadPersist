@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
             -framework Foundation -Isrc -Ivendor/miniz \
-            tests/StorageSmoke.m src/PDStorage.m src/PDExperimentalScope.m src/PDArchive.m src/PDV2Archive.m src/PDV2Restore.m \
+            tests/StorageSmoke.m src/PDStorage.m src/PDReadme.m src/PDExperimentalScope.m src/PDArchive.m src/PDV2Archive.m src/PDV2Restore.m \
             vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
             -o /tmp/pd-storage-smoke
           TEST_HOME="$(mktemp -d)"
@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
             -framework Foundation -Isrc -Ivendor/miniz \
-            tests/StorageV2Smoke.m src/PDStorage.m src/PDExperimentalScope.m \
+            tests/StorageV2Smoke.m src/PDStorage.m src/PDReadme.m src/PDExperimentalScope.m \
             src/PDArchive.m src/PDV2Archive.m src/PDV2Restore.m \
             vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
             -o /tmp/pd-v2-storage-smoke

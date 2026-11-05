@@ -150,10 +150,10 @@
     [self line:[NSString stringWithFormat:@"RESTORE_V2_LAST result=%@ scopes=%@ id=%@",
         receipt[@"result"] ?: @"not-recorded",receipt[@"scopes"] ?: @[],receipt[@"id"] ?: @"none"]];
     NSString *statusFile=[NSHomeDirectory() stringByAppendingPathComponent:
-        @"Documents/SideloadPersist/webkit-experiment-result.txt"];
+        @"Documents/SideloadPersist/scope-mapping-result.txt"];
     NSString *status=[NSString stringWithContentsOfFile:statusFile encoding:NSUTF8StringEncoding error:nil];
-    [self line:[NSString stringWithFormat:@"WEBKIT_RELOCATION_MODE=%@",status ?: @"off"]];
-    for(NSString *name in @[@"WebKit",@"Cookies"]) {
+    [self line:[NSString stringWithFormat:@"EXTENDED_SCOPE_MODE=%@",status ?: @"off"]];
+    for(NSString *name in @[@"WebKit",@"Cookies",@"Preferences"]) {
         NSString *source=[library stringByAppendingPathComponent:name];
         NSString *target=[NSHomeDirectory() stringByAppendingPathComponent:
             [NSString stringWithFormat:@"Documents/SideloadPersist/Data/%@",name]];
@@ -253,14 +253,15 @@
     self.history=[NSMutableString string];
     [self line:[NSString stringWithFormat:@"StorageProbe %@ / %@",
         UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier]];
-    NSUserDefaults *defaults=[NSUserDefaults standardUserDefaults];
-    NSString *installationID=[defaults stringForKey:@"StorageProbe.InstallationID"];
-    if (!installationID.length) {
-        installationID=NSUUID.UUID.UUIDString;
-        [defaults setObject:installationID forKey:@"StorageProbe.InstallationID"];
-    }
-    [self line:[NSString stringWithFormat:@"INSTALLATION_ID=%@ (App-local; changes after uninstall)",installationID]];
+    // This marker must stay outside Preferences now that defaults are migrated.
     NSString *home=NSHomeDirectory();
+    NSString *installPath=[home stringByAppendingPathComponent:@"Library/Caches/StorageProbe-legacy-installation-id.txt"];
+    NSString *installationID=[NSString stringWithContentsOfFile:installPath encoding:NSUTF8StringEncoding error:nil];
+    if(!installationID.length) {
+        installationID=NSUUID.UUID.UUIDString;
+        [installationID writeToFile:installPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+    [self line:[NSString stringWithFormat:@"INSTALLATION_ID=%@ (Caches/App-local, not migrated)",installationID]];
     NSString *source=[home stringByAppendingPathComponent:@"Library/Application Support"];
     NSString *target=[home stringByAppendingPathComponent:@"Documents/SideloadPersist/Data/Application Support"];
     char buffer[4096]={0};
@@ -374,7 +375,7 @@
     [self line:[NSString stringWithFormat:@"COREDATA_ROWS: before=%ld after=%ld",(long)coreBefore,(long)coreAfter]];
     [[NSUserDefaults standardUserDefaults] setInteger:42 forKey:@"StorageProbe.Test"];
     [self check:[[NSUserDefaults standardUserDefaults] integerForKey:@"StorageProbe.Test"]==42
-          label:@"NSUserDefaults (not redirected; App-local)"];
+          label:@"NSUserDefaults (Preferences symlink; verify across reinstall)"];
     [self check:[[NSFileManager defaultManager] fileExistsAtPath:
        [target stringByAppendingPathComponent:@"StorageProbe/database.sqlite"]]
           label:@"Real SQLite data in Documents/SideloadPersist/Data"];

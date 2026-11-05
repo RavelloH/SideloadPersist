@@ -1,6 +1,7 @@
 #import "PDStorage.h"
 #import "PDExperimentalScope.h"
 #import "PDV2Restore.h"
+#import "PDReadme.h"
 #import <sys/stat.h>
 #import <unistd.h>
 #import <errno.h>
@@ -75,13 +76,13 @@ static void PDSetStatus(PDStorageState state, NSString *message) {
 static void PDWriteManifest(void) {
     NSMutableArray<NSString *> *scopes=[NSMutableArray arrayWithObject:@"Application Support"];
     NSString *home=[PDStorageDocuments() stringByDeletingLastPathComponent];
-    for(NSString *scope in @[@"WebKit",@"Cookies"]) {
+    for(NSString *scope in @[@"WebKit",@"Cookies",@"Preferences"]) {
         NSString *source=[[home stringByAppendingPathComponent:@"Library"] stringByAppendingPathComponent:scope];
         NSString *target=[[PDStorageRoot() stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:scope];
         if(PDLinkMatches(source,target)) [scopes addObject:scope];
     }
     NSDictionary *manifest = @{
-        @"format": scopes.count>1 ? @"SideloadPersist.Directory.V2" : @"SideloadPersist.Directory.V1",
+        @"format": [scopes containsObject:@"Preferences"] ? @"SideloadPersist.Directory.V3" : (scopes.count>1 ? @"SideloadPersist.Directory.V2" : @"SideloadPersist.Directory.V1"),
         @"scopes":scopes,
         @"mode": @"symlink",
         @"source": @"Library/Application Support",
@@ -92,6 +93,7 @@ static void PDWriteManifest(void) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingPrettyPrinted error:nil];
     if (data) [data writeToFile:[PDStorageRoot() stringByAppendingPathComponent:@"manifest.json"]
                        options:NSDataWritingAtomic error:nil];
+    PDReadmeUpdate(scopes);
 }
 static BOOL PDIsSafeID(NSString *value) {
     if (value.length != 36) return NO;
@@ -173,13 +175,13 @@ PDStorageState PDStorageBootstrap(void) {
             PDSetStatus(PDStorageStateFailed,@"无法建立 Documents 持久化目录");
             return s_state;
         }
-        // Automatically mount WebKit and Cookies for every injected app.
+        // Automatically mount WebKit, Cookies and Preferences for every injected app.
         // If a restore is pending, replay it first: a directory may be
         // temporarily parked under Backups after an interrupted transaction.
         BOOL hadPendingRestore=[NSFileManager.defaultManager fileExistsAtPath:
             [root stringByAppendingPathComponent:@"restore-pending.txt"]];
         if (!hadPendingRestore && !PDInitializeExtraScopes()) {
-            PDSetStatus(PDStorageStateConflict,@"WebKit/Cookies 目录冲突，原数据未覆盖");
+            PDSetStatus(PDStorageStateConflict,@"WebKit/Cookies/Preferences 目录冲突，原数据未覆盖");
             return s_state;
         }
         if (!PDApplyPendingRestore()) {
@@ -187,7 +189,7 @@ PDStorageState PDStorageBootstrap(void) {
             return s_state;
         }
         if(hadPendingRestore && !PDInitializeExtraScopes()) {
-            PDSetStatus(PDStorageStateConflict,@"恢复后 WebKit/Cookies 目录冲突，原数据未覆盖");
+            PDSetStatus(PDStorageStateConflict,@"恢复后 WebKit/Cookies/Preferences 目录冲突，原数据未覆盖");
             return s_state;
         }
         if (PDLinkMatches(source,target)) {

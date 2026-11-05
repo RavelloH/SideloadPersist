@@ -30,10 +30,10 @@ static BOOL PDCreateDirectory(NSString *path) {
     if(!result) PDStorageTrace(@"EXPERIMENT: directory create failed: %@",error);
     return result;
 }
-// For the two experimental paths only, inspect both before mutating either.
-// Abort on conflicting/non-directory targets instead of attempting a merge.
-BOOL PDRelocateWebKitAndCookies(NSString *home,NSString *root) {
-    NSArray<NSString *> *names=@[@"WebKit",@"Cookies"];
+// The app's supported additional persistent directories are preflighted
+// together: never overwrite a nonempty source with an existing target.
+BOOL PDRelocateExtendedScopes(NSString *home,NSString *root) {
+    NSArray<NSString *> *names=@[@"WebKit",@"Cookies",@"Preferences"];
     NSMutableArray<NSMutableDictionary *> *plans=[NSMutableArray array];
     for(NSString *name in names) {
         NSString *source=[[home stringByAppendingPathComponent:@"Library"] stringByAppendingPathComponent:name];
@@ -89,7 +89,7 @@ BOOL PDRelocateWebKitAndCookies(NSString *home,NSString *root) {
         plan[@"linkedNow"]=@YES;
         if(!PDIsOurLink(source,target)) goto rollback;
     }
-    PDStorageTrace(@"WebKit + Cookies relocated as verified symlinks");
+    PDStorageTrace(@"WebKit, Cookies and Preferences relocated as verified symlinks");
     return YES;
 rollback:
     PDStorageTrace(@"EXPERIMENT: relocation failed (%s), attempting reverse rollback",strerror(errno));
@@ -114,8 +114,8 @@ BOOL PDInitializeExtraScopes(void) {
     // Do not gate the data path on a Bundle ID, Info.plist key or a marker that
     // disappears after reinstalling the app.
     NSString *home=[PDStorageDocuments() stringByDeletingLastPathComponent];
-    BOOL ok=PDRelocateWebKitAndCookies(home,PDStorageRoot());
-    NSString *report=[PDStorageRoot() stringByAppendingPathComponent:@"webkit-experiment-result.txt"];
+    BOOL ok=PDRelocateExtendedScopes(home,PDStorageRoot());
+    NSString *report=[PDStorageRoot() stringByAppendingPathComponent:@"scope-mapping-result.txt"];
     [(ok ? @"ready" : @"failed") writeToFile:report atomically:YES encoding:NSUTF8StringEncoding error:nil];
     return ok;
 }
