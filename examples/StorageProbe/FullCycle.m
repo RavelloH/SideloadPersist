@@ -8,6 +8,7 @@
 #import <sys/stat.h>
 #import <sys/mman.h>
 #import <fcntl.h>
+#import <dlfcn.h>
 #import <unistd.h>
 
 static NSString *SPFingerprint(NSData *data) {
