@@ -72,6 +72,13 @@
     self.history=[NSMutableString string];
     [self line:[NSString stringWithFormat:@"StorageProbe %@ / %@",
         UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier]];
+    NSUserDefaults *defaults=[NSUserDefaults standardUserDefaults];
+    NSString *installationID=[defaults stringForKey:@"StorageProbe.InstallationID"];
+    if (!installationID.length) {
+        installationID=NSUUID.UUID.UUIDString;
+        [defaults setObject:installationID forKey:@"StorageProbe.InstallationID"];
+    }
+    [self line:[NSString stringWithFormat:@"INSTALLATION_ID=%@ (App-local; changes after uninstall)",installationID]];
     NSString *home=NSHomeDirectory();
     NSString *source=[home stringByAppendingPathComponent:@"Library/Application Support"];
     NSString *target=[home stringByAppendingPathComponent:@"Documents/SideloadPersist/Data/Application Support"];
@@ -86,6 +93,16 @@
     BOOL mk=[[NSFileManager defaultManager] createDirectoryAtPath:test
           withIntermediateDirectories:YES attributes:nil error:&error];
     [self check:mk label:[NSString stringWithFormat:@"NSFileManager createDirectory %@",error ?: @""]];
+    NSString *markerPath=[test stringByAppendingPathComponent:@"persistent-marker.txt"];
+    NSString *dataMarker=[NSString stringWithContentsOfFile:markerPath encoding:NSUTF8StringEncoding error:nil];
+    BOOL markerExists=dataMarker.length>0;
+    if (!markerExists) {
+        dataMarker=NSUUID.UUID.UUIDString;
+        [dataMarker writeToFile:markerPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+    [self line:[NSString stringWithFormat:@"PERSISTENT_DATA_MARKER=%@ (%@)",
+                 dataMarker ?: @"ERROR",markerExists ? @"restored/existing" : @"newly created"]];
+    [self check:dataMarker.length>0 label:@"Persistent marker read/write through symlink"];
     NSString *stringFile=[test stringByAppendingPathComponent:@"nsdata.txt"];
     NSData *payload=[@"HELLO_FOUNDATION_2026" dataUsingEncoding:NSUTF8StringEncoding];
     BOOL wroteNSData=[payload writeToFile:stringFile options:NSDataWritingAtomic error:&error];
@@ -115,23 +132,34 @@
     [self check:handleOK label:@"NSFileHandle writeData"];
     NSString *sqlite=[test stringByAppendingPathComponent:@"database.sqlite"];
     sqlite3 *db=NULL;
+    sqlite3_int64 sqliteBefore=-1,sqliteAfter=-1;
     int sqlStatus=sqlite3_open(sqlite.fileSystemRepresentation,&db);
     BOOL sqlGood=sqlStatus==SQLITE_OK;
     if(sqlGood) {
         char *errMsg=NULL;
-        sqlGood=sqlite3_exec(db,"PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS t(k INTEGER PRIMARY KEY, v TEXT); INSERT INTO t(v) VALUES ('persisted');",NULL,NULL,&errMsg)==SQLITE_OK;
+        sqlGood=sqlite3_exec(db,"PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS t(k INTEGER PRIMARY KEY, v TEXT);",NULL,NULL,&errMsg)==SQLITE_OK;
+        if(errMsg) { sqlite3_free(errMsg);errMsg=NULL; }
+        sqlite3_stmt *countStatement=NULL;
+        if(sqlGood && sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM t",-1,&countStatement,NULL)==SQLITE_OK) {
+            if(sqlite3_step(countStatement)==SQLITE_ROW) sqliteBefore=sqlite3_column_int64(countStatement,0);
+        }
+        if(countStatement) sqlite3_finalize(countStatement);
+        if(sqliteBefore<0) sqlGood=NO;
+        if(sqlGood) sqlGood=sqlite3_exec(db,"INSERT INTO t(v) VALUES ('persisted');",NULL,NULL,&errMsg)==SQLITE_OK;
         if(errMsg) sqlite3_free(errMsg);
         sqlite3_close(db); db=NULL;
     }
     if (sqlite3_open(sqlite.fileSystemRepresentation,&db)==SQLITE_OK) {
         sqlite3_stmt *stmt=NULL;
-        if(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM t",-1,&stmt,NULL)==SQLITE_OK)
-            sqlGood=sqlGood && sqlite3_step(stmt)==SQLITE_ROW && sqlite3_column_int(stmt,0)>0;
+        if(sqlGood && sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM t",-1,&stmt,NULL)==SQLITE_OK &&
+           sqlite3_step(stmt)==SQLITE_ROW) sqliteAfter=sqlite3_column_int64(stmt,0);
         else sqlGood=NO;
         if(stmt) sqlite3_finalize(stmt);
         sqlite3_close(db);
     } else sqlGood=NO;
+    sqlGood=sqlGood && sqliteBefore>=0 && sqliteAfter==sqliteBefore+1;
     [self check:sqlGood label:@"SQLite WAL create/insert/reopen/query"];
+    [self line:[NSString stringWithFormat:@"SQLITE_ROWS: before=%lld after=%lld",sqliteBefore,sqliteAfter]];
 
     // CoreData's SQLite store goes through the same filesystem path, without
     // relying on any Objective-C method swizzling in the plugin.
@@ -148,22 +176,28 @@
     NSPersistentStore *store=[coordinator addPersistentStoreWithType:NSSQLiteStoreType
        configuration:nil URL:[NSURL fileURLWithPath:coredata] options:nil error:&coreError];
     BOOL coreGood=(store!=nil);
+    NSInteger coreBefore=-1,coreAfter=-1;
     if(store) {
         NSManagedObjectContext *ctx=[[NSManagedObjectContext alloc] initWithConcurrencyType:NSMainQueueConcurrencyType];
         ctx.persistentStoreCoordinator=coordinator;
+        NSFetchRequest *request=[NSFetchRequest fetchRequestWithEntityName:@"Item"];
+        coreBefore=[ctx countForFetchRequest:request error:&coreError];
         NSManagedObject *item=[NSEntityDescription insertNewObjectForEntityForName:@"Item" inManagedObjectContext:ctx];
         [item setValue:@"test" forKey:@"name"];
         coreGood=([ctx save:&coreError] && coreGood);
+        coreAfter=[ctx countForFetchRequest:request error:&coreError];
+        coreGood=coreGood && coreBefore>=0 && coreAfter==coreBefore+1;
         [coordinator removePersistentStore:store error:nil];
     }
     [self check:coreGood label:@"CoreData SQLite persistent store"];
+    [self line:[NSString stringWithFormat:@"COREDATA_ROWS: before=%ld after=%ld",(long)coreBefore,(long)coreAfter]];
     [[NSUserDefaults standardUserDefaults] setInteger:42 forKey:@"StorageProbe.Test"];
     [self check:[[NSUserDefaults standardUserDefaults] integerForKey:@"StorageProbe.Test"]==42
           label:@"NSUserDefaults (not redirected; App-local)"];
     [self check:[[NSFileManager defaultManager] fileExistsAtPath:
        [target stringByAppendingPathComponent:@"StorageProbe/database.sqlite"]]
           label:@"Real SQLite data in Documents/SideloadPersist/Data"];
-    [self line:@"注意：首轮生成文件、重启后再次运行，确认数据库计数持续增加。"];
+    [self line:@"严格恢复测试：删除 App 前记录 INSTALLATION_ID、PERSISTENT_DATA_MARKER 和数据库条数；恢复后前者应变化，标记应保持，数据库数量应接续增加。"];
 }
 - (void)copyResults {
     UIPasteboard.generalPasteboard.string=self.history;

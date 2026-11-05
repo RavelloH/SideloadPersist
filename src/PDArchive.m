@@ -123,6 +123,17 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
             PDImportError(error,6,@"ZIP 包含符号链接或特殊文件，已拒绝导入");
             goto failure;
         }
+        // Files.app and Finder may add AppleDouble metadata when archiving.
+        // These are not part of the application's authoritative data and must
+        // not be restored as dot-underscore files in Application Support.
+        NSString *firstComponent=PDComponents(safe).firstObject;
+        NSString *lastComponent=PDComponents(safe).lastObject;
+        if ([firstComponent isEqualToString:@"__MACOSX"] ||
+            [lastComponent hasPrefix:@"._"] ||
+            [lastComponent isEqualToString:@".DS_Store"]) {
+            PDStorageTrace(@"Skipping ZIP metadata entry: %@",safe);
+            continue;
+        }
         BOOL directory=mz_zip_reader_is_file_a_directory(&zip,i);
         if (!directory) {
             total += stat.m_uncomp_size;

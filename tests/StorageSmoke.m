@@ -11,6 +11,18 @@ static void check(BOOL good, NSString *message) {
     if (!good) fail(message);
     NSLog(@"PASS %@",message);
 }
+static void makeZipWithAppleDouble(NSString *path) {
+    mz_zip_archive zip={0};
+    if (!mz_zip_writer_init_file(&zip,path.fileSystemRepresentation,0)) fail(@"start metadata ZIP writer");
+    check(mz_zip_writer_add_mem(&zip,"SideloadPersist/Data/Application Support/restored.json",
+                                "RESTORED",strlen("RESTORED"),MZ_BEST_SPEED),@"add primary data entry");
+    check(mz_zip_writer_add_mem(&zip,"__MACOSX/SideloadPersist/Data/Application Support/._restored.json",
+                                "APPLEDATA",strlen("APPLEDATA"),MZ_BEST_SPEED),@"add AppleDouble ZIP entry");
+    check(mz_zip_writer_add_mem(&zip,"SideloadPersist/Data/Application Support/.DS_Store",
+                                "METADATA",strlen("METADATA"),MZ_BEST_SPEED),@"add Finder metadata entry");
+    check(mz_zip_writer_finalize_archive(&zip),@"metadata ZIP finalize");
+    mz_zip_writer_end(&zip);
+}
 static void makeZip(NSString *path, const char *entryName, const char *contents) {
     mz_zip_archive zip={0};
     if (!mz_zip_writer_init_file(&zip,path.fileSystemRepresentation,0)) fail(@"start zip writer");
@@ -51,7 +63,7 @@ int main(int argc,char **argv) {
             NSError *err=nil;
             check(!PDArchiveStageZIP([NSURL fileURLWithPath:evil],&err),@"ZIP traversal rejected");
             NSString *valid=[home stringByAppendingPathComponent:@"valid.zip"];
-            makeZip(valid,"SideloadPersist/Data/Application Support/restored.json","RESTORED");
+            makeZipWithAppleDouble(valid);
             NSString *id=PDArchiveStageZIP([NSURL fileURLWithPath:valid],&err);
             check(id.length==36,@"archive staged");
             check([fm fileExistsAtPath:seed],@"import has not altered active original data");
@@ -63,6 +75,10 @@ int main(int argc,char **argv) {
                                               encoding:NSUTF8StringEncoding error:nil]
                        isEqualToString:@"RESTORED"],@"restored bytes visible through old path");
             check(![fm fileExistsAtPath:seed],@"new content replaced original atomically");
+            check(![fm fileExistsAtPath:[source stringByAppendingPathComponent:@"._restored.json"]],
+                  @"AppleDouble metadata not restored");
+            check(![fm fileExistsAtPath:[source stringByAppendingPathComponent:@".DS_Store"]],
+                  @"Finder metadata not restored");
             NSArray *backups=[fm contentsOfDirectoryAtPath:[[home stringByAppendingPathComponent:
                 @"Documents/SideloadPersist"] stringByAppendingPathComponent:@"Backups"] error:nil];
             check(backups.count==1,@"previous data preserved as backup");

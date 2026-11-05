@@ -1,6 +1,6 @@
 # SideloadPersist — iOS 数据持久化 dylib（实验性）
 
-**v0.8：目录级重定位，不再依赖外部文件夹选择器，也不依赖证书的 Bundle ID 与 `application-identifier` 匹配。**
+**v0.8.1：目录级重定位 + 恢复增强测试。不依赖外部文件夹选择器，也不依赖证书的 Bundle ID 与 `application-identifier` 匹配。**
 
 ## 运行机制
 
@@ -43,7 +43,7 @@ App 沙盒/
 2. 删除原 App、重新签名安装后，先启动一次，让插件建立目录，再返回「文件」App。注意**删除 App 会删除 App 自己的 Documents**。
 3. 可先在「文件」App 复制备份中的 `Data/Application Support` 到新 App 的同名目标位置，再重新启动，或者使用首次介绍页的「导入备份 ZIP」按钮。
 
-ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP 放进 `SideloadPersist/Inbox/` 再点「扫描 Inbox 中的 ZIP」。若签名身份不匹配导致系统选择器失效，仍能使用 Inbox。
+ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP 放进 `SideloadPersist/Inbox/` 再点「扫描 Inbox 中的 ZIP」。由「文件」App/Finder 创建的 ZIP 往往包含 `__MACOSX/`、`._*`、`.DS_Store` 辅助元数据；导入器会跳过这些无关条目，不污染 `Application Support`。若签名身份不匹配导致系统选择器失效，仍能使用 Inbox。
 
 可导入 ZIP 的内容布局：
 
@@ -65,7 +65,7 @@ GitHub Actions 自动生成（未签名）：
 - `StorageProbe-unsigned-ipa`：测试 `NSFileManager`、`NSData`、`NSFileHandle`、POSIX `open/write/stat`、`stdio`、SQLite WAL、CoreData SQLite、NSUserDefaults；
 - `PickerProbe-unsigned-ipa`：保留的文件选择器兼容性测试。
 
-**StorageProbe 不自带 dylib。** 使用 LCSign 等工具注入 dylib、开启文件共享、签名安装，打开 StorageProbe 后按「运行存储 API 测试」，复制结果并在「文件」App 中确认 `SideloadPersist/Data/Application Support/StorageProbe` 下确实存在文件。重新启动再运行，检查文件和数据库能否继续读取。不要直接在重要 App 上测试首次目录迁移。
+**StorageProbe 不自带 dylib。** 使用 LCSign 等工具注入 dylib、开启文件共享、签名安装，打开 StorageProbe 后按「运行存储 API 测试」，复制结果并在「文件」App 中确认 `SideloadPersist/Data/Application Support/StorageProbe` 下确实存在文件。新版输出 `SQLITE_ROWS`、`COREDATA_ROWS` 精确计数，以及 `PERSISTENT_DATA_MARKER`（随 Documents 数据恢复）和 `INSTALLATION_ID`（属于 UserDefaults，卸载重装后变化）。严格验证跨安装恢复时：备份前记录这些数值；重装后导入 ZIP、冷启动再运行，应该看到安装 ID 改变、数据标记恢复到旧值、两种数据库的记录数从旧值继续增加。不要直接在重要 App 上测试首次目录迁移。
 
 CI 另在 macOS 隔离 HOME 环境中验证原子迁移、符号链接路径读写、恶意 ZIP 穿越拦截、ZIP 暂存以及重新启动恢复；**这些并非 iOS 27.0.1 的真机测试**。
 
