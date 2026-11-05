@@ -110,6 +110,11 @@ static void PDWriteManifest(void) {
                        options:NSDataWritingAtomic error:nil];
     PDReadmeUpdate(scopes);
 }
+void PDStorageRefreshOptionalMappings(void) {
+    if(!PDStorageIsLinked()) return;
+    PDCustomLibraryMount();
+    PDWriteManifest();
+}
 static BOOL PDIsSafeID(NSString *value) {
     if (value.length != 36) return NO;
     NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF-"];
