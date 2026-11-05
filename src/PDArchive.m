@@ -100,6 +100,10 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
     unsigned long long total=0;
     BOOL knownRoot=NO;
     NSMutableSet *firstParts=[NSMutableSet set];
+    NSString *commonRoot=nil;
+    NSString *identifier=nil;
+    NSString *stage=nil;
+    NSUInteger extracted=0;
     for (mz_uint i=0;i<count;i++) {
         mz_zip_archive_file_stat stat={0};
         NSString *raw=PDArchiveFilename(&zip,i);
@@ -127,14 +131,13 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
         if (PDKnownRelativePath(safe)) knownRoot=YES;
         [entries addObject:@{@"index":@(i),@"path":safe,@"dir":@(directory)}];
     }
-    NSString *commonRoot=(!knownRoot && firstParts.count==1) ? firstParts.anyObject : nil;
-    NSString *identifier=NSUUID.UUID.UUIDString;
-    NSString *stage=[[[PDStorageRoot() stringByAppendingPathComponent:@"Incoming"]
+    commonRoot=(!knownRoot && firstParts.count==1) ? firstParts.anyObject : nil;
+    identifier=NSUUID.UUID.UUIDString;
+    stage=[[[PDStorageRoot() stringByAppendingPathComponent:@"Incoming"]
                          stringByAppendingPathComponent:identifier]
                          stringByAppendingPathComponent:@"Application Support"];
     if (![[NSFileManager defaultManager] createDirectoryAtPath:stage
              withIntermediateDirectories:YES attributes:nil error:error]) goto failure;
-    NSUInteger extracted=0;
     for (NSDictionary *entry in entries) {
         NSString *original=entry[@"path"];
         NSString *relative=PDKnownRelativePath(original);

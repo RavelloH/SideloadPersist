@@ -31,6 +31,18 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -framework Foundation -Isrc tests/PathSmoke.m src/PDRedirect.m -o /tmp/pd-path-smoke
           /tmp/pd-path-smoke
+      - name: Test relocation, ZIP traversal protection and staged cold-start restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
+            -framework Foundation -Isrc -Ivendor/miniz \
+            tests/StorageSmoke.m src/PDStorage.m src/PDArchive.m \
+            vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
+            -o /tmp/pd-storage-smoke
+          TEST_HOME="$(mktemp -d)"
+          HOME="$TEST_HOME" /tmp/pd-storage-smoke prepare
+          HOME="$TEST_HOME" /tmp/pd-storage-smoke apply
       - name: Build independent unsigned PickerProbe IPA
         shell: bash
         run: |
