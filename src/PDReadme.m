@@ -39,10 +39,10 @@ static NSString *PDReadmeText(NSArray<NSString *> *verifiedScopes) {
     for(NSString *scope in @[@"Application Support",@"WebKit",@"Cookies",@"Preferences"]) {
         BOOL active=[verifiedScopes containsObject:scope];
         [readme appendFormat:@"| `Data/%@` | `Library/%@` | %@%@ |\n",
-            scope,scope,active?@"已建立映射":@"未建立映射",
+            scope,scope,active?([scope isEqualToString:@"Preferences"] ? @"API 实时存储（无需符号链接）" : @"已建立映射"):@"未建立映射",
             active?[NSString stringWithFormat:@"（%@）",descriptions[scope]]:@""];
     }
-    [readme appendString:@"\n只有标记为「已建立映射」的目录才处于持久化范围；`manifest.json` 包含用于自动恢复的机器可读清单。对于数据库（SQLite/WAL）、WebKit 等，**在 App 完全退出后再备份或直接编辑文件**，以免破坏数据一致性。\n\n"
+    [readme appendString:@"\nApplication Support、WebKit、Cookies 通过原路径符号链接持久化；Preferences 使用开发中的 API Hook 直接保存实时偏好域（不修改系统的 Library/Preferences 目录）。`manifest.json` 包含用于自动恢复的机器可读清单。对于数据库（SQLite/WAL）、WebKit 等，**在 App 完全退出后再备份或直接编辑文件**，以免破坏数据一致性。\n\n"
         @"## 其他目录与文件\n\n"
         @"| 名称 | 作用 |\n"
         @"| --- | --- |\n"

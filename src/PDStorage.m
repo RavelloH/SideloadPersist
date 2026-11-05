@@ -2,6 +2,7 @@
 #import "PDExperimentalScope.h"
 #import "PDV2Restore.h"
 #import "PDReadme.h"
+#import "PDPreferencesHook.h"
 #import <sys/stat.h>
 #import <unistd.h>
 #import <errno.h>
@@ -76,12 +77,16 @@ static void PDSetStatus(PDStorageState state, NSString *message) {
 static void PDWriteManifest(void) {
     NSMutableArray<NSString *> *scopes=[NSMutableArray arrayWithObject:@"Application Support"];
     NSString *home=[PDStorageDocuments() stringByDeletingLastPathComponent];
-    for(NSString *scope in @[@"WebKit",@"Cookies",@"Preferences"]) {
+    for(NSString *scope in @[@"WebKit",@"Cookies"]) {
         NSString *source=[[home stringByAppendingPathComponent:@"Library"] stringByAppendingPathComponent:scope];
         NSString *target=[[PDStorageRoot() stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:scope];
         if(PDLinkMatches(source,target)) [scopes addObject:scope];
     }
+    if(PDPreferencesHookActive()) [scopes addObject:@"Preferences"];
     NSDictionary *manifest = @{
+        @"scopeModes":@{@"Application Support":@"symlink",
+                       @"WebKit":@"symlink",@"Cookies":@"symlink",
+                       @"Preferences":@"live-api-hook"},
         @"format": [scopes containsObject:@"Preferences"] ? @"SideloadPersist.Directory.V3" : (scopes.count>1 ? @"SideloadPersist.Directory.V2" : @"SideloadPersist.Directory.V1"),
         @"scopes":scopes,
         @"mode": @"symlink",
@@ -191,6 +196,7 @@ PDStorageState PDStorageBootstrap(void) {
         if(hadPendingRestore) extrasReady=PDInitializeExtraScopes();
         if(!extrasReady) PDStorageTrace(@"Some optional scopes were not mapped; core Application Support bootstrap continues");
         if (PDLinkMatches(source,target)) {
+            if(!PDPreferencesInstallHook()) PDStorageTrace(@"Preferences live API Hook unavailable; other scopes remain enabled");
             PDWriteManifest();
             PDSetStatus(PDStorageStateReady,extrasReady ? @"目录映射已存在" :
                 @"Application Support 已映射；部分扩展目录未映射，详见 scope-mapping-result.json");
@@ -252,6 +258,7 @@ PDStorageState PDStorageBootstrap(void) {
             PDSetStatus(PDStorageStateFailed,@"符号链接验证失败");
             return s_state;
         }
+        if(!PDPreferencesInstallHook()) PDStorageTrace(@"Preferences live API Hook unavailable; other scopes remain enabled");
         PDWriteManifest();
         PDSetStatus(PDStorageStateRecovered,extrasReady ? @"持久化目录已建立并验证" :
             @"Application Support 已建立；部分扩展目录未映射，详见 scope-mapping-result.json");

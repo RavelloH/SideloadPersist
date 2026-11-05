@@ -1,5 +1,6 @@
 #import "PDV2Archive.h"
 #import "PDStorage.h"
+#import "PDPreferencesBackend.h"
 #import "miniz.h"
 #import <sys/stat.h>
 #import <TargetConditionals.h>
@@ -240,6 +241,14 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
                                                destination.fileSystemRepresentation,0)) {
                 PDV2Fail(error,9,@"ZIP 内容解压或 CRC 校验失败");goto invalid;
             }
+        }
+    }
+    if([scopes containsObject:@"Preferences"]) {
+        NSString *reason=nil;
+        NSString *preferences=[[directory stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:@"Preferences"];
+        if(!PDPreferencesValidateDirectory(preferences,&reason)) {
+            PDV2Fail(error,16,[NSString stringWithFormat:@"无效的 Preferences 实时存储备份：%@",reason]);
+            goto invalid;
         }
     }
     {

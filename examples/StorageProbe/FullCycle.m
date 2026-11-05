@@ -105,7 +105,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
                 [key isEqualToString:@"defaultsSuite"] ||
                 [key isEqualToString:@"cfPreferences"]) scope=@"Preferences";
         if(![self.mappedScopes containsObject:scope]) {
-            [self line:[NSString stringWithFormat:@"NOT_PERSISTED %@: missing original Library/%@ symlink, direct Documents writes do not prove recovery",key,scope]];
+            [self line:[NSString stringWithFormat:@"NOT_PERSISTED %@: no verified data backend for scope %@, direct Documents writes do not prove recovery",key,scope]];
         } else [self compare:key actual:before];
     }
     else if(self.verifying) {
@@ -163,7 +163,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     }
     NSString *previous=self.baseline[@"installationID"];
     self.verifying=(previous.length && ![previous isEqualToString:install]);
-    [self line:@"===== ONE-TAP FULL STORAGE CYCLE / v2 (Preferences) ====="];
+    [self line:@"===== ONE-TAP FULL STORAGE CYCLE / v3 (Preferences API Hook) ====="];
     if(priorInvalid) [self line:@"INVALID_BASELINE_ARCHIVED: old incomplete baseline ignored; starting a new local backup baseline without reinstalling"];
     [self line:[NSString stringWithFormat:@"PHASE=%@ installation=%@ baselineInstallation=%@",
         self.verifying?@"RESTORED_INSTALLATION_VERIFY":@"GENERATE_BACKUP_BASELINE",
@@ -216,8 +216,16 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         char buffer[4096]={0};
         ssize_t len=readlink(original.fileSystemRepresentation,buffer,sizeof(buffer)-1);
         BOOL matching=len>0 && [destination isEqualToString:[NSString stringWithUTF8String:buffer]];
-        [self check:matching label:[NSString stringWithFormat:@"SCOPE_LINK %@",scope]];
-        if(matching) [verified addObject:scope];
+        if([scope isEqualToString:@"Preferences"]) {
+            BOOL (*hookActive)(void)=(BOOL(*)(void))dlsym(RTLD_DEFAULT,"PDPreferencesHookActive");
+            BOOL active=hookActive && hookActive() &&
+                [manifest[@"scopeModes"][@"Preferences"] isEqualToString:@"live-api-hook"];
+            [self check:active label:@"SCOPE_HOOK Preferences live API storage (no symlink)"];
+            if(active) [verified addObject:scope];
+        } else {
+            [self check:matching label:[NSString stringWithFormat:@"SCOPE_LINK %@",scope]];
+            if(matching) [verified addObject:scope];
+        }
     }
     self.mappedScopes=[verified copy];
     if(self.verifying)
@@ -452,12 +460,12 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSString *prefsDir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Preferences"];
     struct stat st={0};
     BOOL isLink=lstat(prefsDir.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode);
-    [self line:[NSString stringWithFormat:@"PREFERENCES_DIRECTORY_SYMLINK=%@ (expected yes)",
+    [self line:[NSString stringWithFormat:@"PREFERENCES_DIRECTORY_SYMLINK=%@ (expected no; live API Hook instead)",
                   isLink?@"yes":@"no"]];
 }
 - (void)testNativeStores {
-    // CFPreferences may have a separate in-process cache. This probes its
-    // public API but never interprets native persistence as plugin recovery.
+    // CFPreferences has its own APIs. Test the imported C entry point to
+    // determine whether fishhook really redirects this app's preference calls.
     CFStringRef key=CFSTR("StorageProbe.FullCycle.CFPreferencesCounter");
     CFPropertyListRef previous=CFPreferencesCopyAppValue(key,kCFPreferencesCurrentApplication);
     NSInteger before=0;

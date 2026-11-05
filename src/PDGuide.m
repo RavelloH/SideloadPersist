@@ -68,7 +68,7 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
     for (NSUInteger i=0;i<headings.count;i++) {
         [rows addObject:PDGuideStep(i,headings[i],descriptions[i])];
     }
-    UILabel *footnote=PDGuideLabel(@"当前支持 Application Support、WebKit、Cookies 及 Preferences 目录迁移。Keychain、Caches 等仍不在备份范围内。退出 App 后再压缩数据，并将 ZIP 保存到 App 文件夹之外。",
+    UILabel *footnote=PDGuideLabel(@"Application Support、WebKit、Cookies 采用目录迁移；Preferences 的 API 实时存储仍在测试中。Keychain、Caches 等暂未覆盖。退出 App 后再备份，并将 ZIP 保存到 App 文件夹之外。",
                                    12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
     [rows addObject:footnote];
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:rows];

@@ -1,6 +1,7 @@
 #import "PDV2Restore.h"
 #import "PDV2Archive.h"
 #import "PDStorage.h"
+#import "PDPreferencesBackend.h"
 #import <sys/stat.h>
 #import <unistd.h>
 #import <errno.h>
@@ -56,7 +57,14 @@ static BOOL PDV2PreflightScope(NSString *name,NSString *root,NSString *directory
     if((hasTarget && !S_ISDIR(dst.st_mode)) ||
        (hasStage && !S_ISDIR(stg.st_mode)) ||
        (hasBackup && !S_ISDIR(bak.st_mode))) return NO;
-    if(hasSource) {
+    if([name isEqualToString:@"Preferences"]) {
+        NSString *reason=nil;
+        NSString *candidate=hasStage ? stage : target;
+        if(!PDPreferencesValidateDirectory(candidate,&reason)) {
+            PDStorageTrace(@"Preferences restore preflight rejected: %@",reason);
+            return NO;
+        }
+    } else if(hasSource) {
         if(S_ISLNK(src.st_mode)) {
             if(!PDV2Link(source,target)) return NO;
         } else if(!S_ISDIR(src.st_mode) || !PDV2Empty(source)) {

@@ -13,3 +13,4 @@ FOUNDATION_EXPORT BOOL PDPreferencesReplaceDomain(NSString *domain, NSDictionary
 FOUNDATION_EXPORT BOOL PDPreferencesRemoveDomain(NSString *domain, NSError **error);
 FOUNDATION_EXPORT BOOL PDPreferencesDomainExists(NSString *domain);
 FOUNDATION_EXPORT NSDictionary *PDPreferencesHealth(void);
+FOUNDATION_EXPORT BOOL PDPreferencesValidateDirectory(NSString *directory, NSString **reason);

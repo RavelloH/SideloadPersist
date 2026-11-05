@@ -137,6 +137,47 @@ BOOL PDPreferencesReplaceDomain(NSString *domain,NSDictionary *values,NSError **
 BOOL PDPreferencesRemoveDomain(NSString *domain,NSError **error) {
     return PDPreferencesReplaceDomain(domain,@{},error);
 }
+
+BOOL PDPreferencesValidateDirectory(NSString *directory,NSString **reason) {
+    NSFileManager *fm=NSFileManager.defaultManager;
+    NSArray *contents=[fm contentsOfDirectoryAtPath:directory error:nil];
+    if(!contents || !contents.count || contents.count>128) {
+        if(reason) *reason=@"empty-or-oversized-preferences-directory";
+        return NO;
+    }
+    BOOL hasPrimary=NO, hasDomain=NO;
+    for(NSString *name in contents) {
+        if(![name.pathExtension isEqualToString:@"plist"]) {
+            if(reason) *reason=@"unexpected-preferences-file"; return NO;
+        }
+        NSString *file=[directory stringByAppendingPathComponent:name];
+        NSDictionary *stat=[fm attributesOfItemAtPath:file error:nil];
+        if(![stat[NSFileType] isEqualToString:NSFileTypeRegular] ||
+           [stat[NSFileSize] unsignedLongLongValue] > 32ULL*1024*1024) {
+            if(reason) *reason=@"invalid-preferences-file-type-or-size"; return NO;
+        }
+        NSData *bytes=[NSData dataWithContentsOfFile:file];
+        NSDictionary *record=bytes ? [NSPropertyListSerialization propertyListWithData:bytes
+            options:NSPropertyListImmutable format:NULL error:nil] : nil;
+        NSString *domain=record[@"domain"];
+        if(![record isKindOfClass:NSDictionary.class] ||
+           ![record[@"format"] isEqualToString:@"SideloadPersist.LivePreferences.V1"] ||
+           ![domain isKindOfClass:NSString.class] ||
+           ![record[@"values"] isKindOfClass:NSDictionary.class] ||
+           ![record[@"removed"] isKindOfClass:NSArray.class] ||
+           ![name isEqualToString:[PDPreferencesDomainFile(domain) lastPathComponent]]) {
+            if(reason) *reason=@"invalid-live-preferences-record";return NO;
+        }
+        hasDomain=YES;
+        if([domain isEqualToString:(NSBundle.mainBundle.bundleIdentifier ?: @"SideloadPersist.StandaloneTest")])
+            hasPrimary=YES;
+    }
+    if(!hasDomain || !hasPrimary) {
+        if(reason) *reason=@"primary-domain-missing";
+        return NO;
+    }
+    return YES;
+}
 NSDictionary *PDPreferencesHealth(void) {
     NSString *root=PDPreferencesRoot();
     NSArray *files=[NSFileManager.defaultManager contentsOfDirectoryAtPath:root error:nil] ?: @[];

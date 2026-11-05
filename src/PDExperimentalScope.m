@@ -128,7 +128,7 @@ rollback:
 BOOL PDRelocateExtendedScopes(NSString *home,NSString *root) {
     BOOL allOkay=YES;
     NSMutableArray<NSDictionary *> *statuses=[NSMutableArray array];
-    for(NSString *name in @[@"WebKit",@"Cookies",@"Preferences"]) {
+    for(NSString *name in @[@"WebKit",@"Cookies"]) {
         NSString *src=[[home stringByAppendingPathComponent:@"Library"] stringByAppendingPathComponent:name];
         NSString *dst=[[root stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:name];
         NSString *reason=nil;

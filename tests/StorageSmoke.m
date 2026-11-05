@@ -95,11 +95,11 @@ int main(int argc,char **argv) {
             check([fm createDirectoryAtPath:cookies withIntermediateDirectories:YES attributes:nil error:nil],@"create simulated Cookies directory");
             check([@"WEB_DATA" writeToFile:[web stringByAppendingPathComponent:@"data.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil],@"seed simulated WebKit data");
             check([@"COOKIE_DATA" writeToFile:[cookies stringByAppendingPathComponent:@"data.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil],@"seed simulated Cookies data");
-            check(PDRelocateExtendedScopes(home,root),@"four-directory relocation with Preferences");
+            check(PDRelocateExtendedScopes(home,root),@"WebKit/Cookies relocation does not move Preferences");
             struct stat st={0};
             check(lstat(web.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),@"WebKit symlink present");
             check(lstat(cookies.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),@"Cookies symlink present");
-            check(lstat(preferences.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),@"Preferences symlink present");
+            check(lstat(preferences.fileSystemRepresentation,&st)==0 && S_ISDIR(st.st_mode),@"Preferences remains a system-managed directory");
             check([[NSString stringWithContentsOfFile:[preferences stringByAppendingPathComponent:@"test.plist"] encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"PREFERENCE_DATA"],@"Preferences original path still works");
             check([[NSString stringWithContentsOfFile:[web stringByAppendingPathComponent:@"data.txt"] encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"WEB_DATA"],@"WebKit original path still works");
             check([[NSString stringWithContentsOfFile:[cookies stringByAppendingPathComponent:@"data.txt"] encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"COOKIE_DATA"],@"Cookies original path still works");
@@ -112,7 +112,7 @@ int main(int argc,char **argv) {
             check(!PDRelocateExtendedScopes(third,[third stringByAppendingPathComponent:@"Documents/SideloadPersist"]),@"conflicting source/target rejected");
             check([fm fileExistsAtPath:[third stringByAppendingPathComponent:@"Library/WebKit/a.txt"]],@"source retained after conflict");
             check([fm fileExistsAtPath:[third stringByAppendingPathComponent:@"Documents/SideloadPersist/Data/WebKit/b.txt"]],@"target retained after conflict");
-            NSLog(@"All WebKit/Cookies/Preferences relocation checks passed.");
+            NSLog(@"WebKit/Cookies links and native Preferences preservation passed.");
         } else if (strcmp(argv[1],"prepare-bare")==0) {
             check(PDStorageBootstrap()==PDStorageStateRecovered,@"new sandbox initialized");
             NSString *zipPath=[home stringByAppendingPathComponent:@"bare.zip"];
