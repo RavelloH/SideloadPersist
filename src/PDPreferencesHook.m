@@ -43,7 +43,7 @@ static BOOL PDSetupDomain(NSString *domain, NSDictionary *initial) {
 }
 static id PDNewSuite(id self,SEL selector,NSString *suite) {
     id result=originalInitSuite(self,selector,suite);
-    if(!result || !suite.length || [suite hasPrefix:@"group."]) return result;
+    if(!result || !PDPreferencesShouldManageDomain(suite)) return result;
     NSDictionary *initial=originalPersistentDomain(result,@selector(persistentDomainForName:),suite);
     if(PDSetupDomain(suite,initial ?: @{}))
         objc_setAssociatedObject(result,PDPreferenceSuiteKey,suite,OBJC_ASSOCIATION_COPY_NONATOMIC);
@@ -224,6 +224,18 @@ BOOL PDPreferencesHookActive(void) {return s_active;}
 NSString *PDPreferencesHookStatus(void) {return s_status;}
 BOOL PDPreferencesInstallHook(void) {
     if(s_active) return YES;
+    // Old experimental builds unintentionally captured Apple framework suites.
+    // Keep their copies for recovery in native Caches, never in exported ZIPs.
+    NSUInteger excluded=0;
+    NSError *quarantineError=nil;
+    if(!PDPreferencesQuarantineUnmanagedDomains(&excluded,&quarantineError)) {
+        s_status=@"隔离旧版系统偏好文件失败；未安装 Preferences Hook";
+        NSLog(@"[SideloadPersist Preferences] %@: %@",s_status,quarantineError);
+        return NO;
+    }
+    if(excluded)
+        NSLog(@"[SideloadPersist Preferences] 隔离了 %lu 个非应用偏好域文件（保留于 Library/Caches）",
+              (unsigned long)excluded);
     s_domains=[NSMutableSet set];
     s_standard=[NSUserDefaults standardUserDefaults];
     NSString *domain=PDAppDomain();
