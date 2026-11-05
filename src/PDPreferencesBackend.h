@@ -19,5 +19,10 @@ FOUNDATION_EXPORT BOOL PDPreferencesShouldManageDomain(NSString *domain);
 // Non-destructively move legacy system-domain copies out of exported Documents.
 // On failure, callers must not advertise Preferences as fully managed.
 FOUNDATION_EXPORT BOOL PDPreferencesQuarantineUnmanagedDomains(NSUInteger *count, NSError **error);
+// A failed managed-domain mutation can fall back to native defaults and leave
+// the exported copy stale. Record this as a sticky, visible backup blocker.
+FOUNDATION_EXPORT void PDPreferencesMarkIntegrityFailure(NSString *operation);
+FOUNDATION_EXPORT BOOL PDPreferencesIntegrityOK(void);
+FOUNDATION_EXPORT NSString *PDPreferencesIntegrityWarning(void);
 FOUNDATION_EXPORT NSDictionary *PDPreferencesHealth(void);
 FOUNDATION_EXPORT BOOL PDPreferencesValidateDirectory(NSString *directory, NSString **reason);
