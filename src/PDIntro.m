@@ -5,9 +5,14 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <stdlib.h>
 
-static NSString *const kIntroShown = @"SideloadPersist.IntroAccepted.v2";
+static NSString *const kIntroShown = @"SideloadPersist.IntroAccepted.v3";
 static BOOL s_presenting = NO;
 static BOOL s_importInProgress = NO;
+static BOOL PDInboxHasBackup(void) {
+    NSArray<NSString *> *files=[NSFileManager.defaultManager contentsOfDirectoryAtPath:PDStorageInbox() error:nil];
+    for (NSString *name in files) if ([name.pathExtension.lowercaseString isEqualToString:@"zip"]) return YES;
+    return NO;
+}
 
 static UIColor *PDAccent(void) { return [UIColor colorWithRed:0.20 green:0.57 blue:0.95 alpha:1]; }
 static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGroupedBackgroundColor; }
@@ -39,7 +44,7 @@ static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGrou
     if (s_presenting) return;
     BOOL pending = PDArchivePendingID().length > 0;
     BOOL seen = [[NSUserDefaults standardUserDefaults] boolForKey:kIntroShown];
-    if (seen && !pending) return;
+    if (seen && !pending && !PDInboxHasBackup()) return;
     UIApplication *application = UIApplication.sharedApplication;
     for (UIScene *scene in application.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
@@ -342,6 +347,19 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
             s_importInProgress=NO;
             if(!strong) return;
             if(identifier) {
+                // Keep the user-owned ZIP, but remove it from the Inbox top
+                // level so future launches do not repeatedly offer import.
+                NSString *inbox=PDStorageInbox();
+                NSString *parent=[url.path stringByDeletingLastPathComponent];
+                if ([parent.stringByStandardizingPath isEqualToString:inbox.stringByStandardizingPath]) {
+                    NSString *archiveFolder=[inbox stringByAppendingPathComponent:@"Imported"];
+                    [NSFileManager.defaultManager createDirectoryAtPath:archiveFolder withIntermediateDirectories:YES attributes:nil error:nil];
+                    NSString *dest=[archiveFolder stringByAppendingPathComponent:
+                        [NSString stringWithFormat:@"%@-%@",identifier,url.lastPathComponent ?: @"backup.zip"]];
+                    NSError *moveError=nil;
+                    if (![NSFileManager.defaultManager moveItemAtPath:url.path toPath:dest error:&moveError])
+                        PDStorageTrace(@"Preserved Inbox ZIP in place (archive move failed): %@",moveError);
+                }
                 strong.committed=YES;
                 [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kIntroShown];
                 PDStorageTrace(@"Backup validated and staged; awaiting explicit process restart");
