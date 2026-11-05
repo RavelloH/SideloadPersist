@@ -61,7 +61,7 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
     ];
 
     UILabel *title=PDGuideLabel(@"数据如何保留与恢复",31,UIFontWeightBold,UIColor.labelColor);
-    UILabel *lead=PDGuideLabel(@"只需一次备份，便可以在更换签名后继续使用已保存的数据。",
+    UILabel *lead=PDGuideLabel(@"SideloadPersist 将应用受支持的私有数据目录迁移至「文件」App 可访问的 Documents 文件夹，方便备份、恢复与修改应用数据。",
                                 16,UIFontWeightRegular,UIColor.secondaryLabelColor);
 
     NSMutableArray<UIView *> *rows=[NSMutableArray arrayWithObjects:title,lead,nil];
