@@ -9,6 +9,7 @@
 #import "PDV2Archive.h"
 #import "PDPreferencesBackend.h"
 #import "PDPreferencesHook.h"
+#import "PDCustomLibrary.h"
 #import "miniz.h"
 
 static void check(BOOL good, NSString *name) {
@@ -80,6 +81,19 @@ static void archive(NSString *p,BOOL withPrefs,BOOL missingCookie){
                           systemRaw.bytes,systemRaw.length,MZ_BEST_SPEED),
               @"ZIP includes synthetic legacy system preference domain");
     }
+    NSString *custom=[[[data(@"Application Support")
+                            stringByAppendingPathComponent:@"SideloadPersist.Library"]
+                            stringByAppendingPathComponent:appID()]
+                            stringByAppendingPathComponent:@"marker.txt"];
+    if([NSFileManager.defaultManager fileExistsAtPath:custom]) {
+        NSData *value=[@"PRIVATE_NEW" dataUsingEncoding:NSUTF8StringEncoding];
+        NSString *zipName=[@"SideloadPersist/Data/Application Support/SideloadPersist.Library"
+                            stringByAppendingPathComponent:appID()];
+        zipName=[zipName stringByAppendingPathComponent:@"marker.txt"];
+        check(mz_zip_writer_add_mem(&zip,zipName.UTF8String,
+                          value.bytes,value.length,MZ_BEST_SPEED),
+              @"ZIP carries app-owned Library directory inside Application Support");
+    }
     check(mz_zip_writer_finalize_archive(&zip),@"ZIP finalize");
     mz_zip_writer_end(&zip);
 }
@@ -105,7 +119,86 @@ int main(int argc,char **argv){
     NSString *mode=[NSString stringWithUTF8String:argv[1]];
     NSString *pending=[root() stringByAppendingPathComponent:@"restore-pending.txt"];
     NSFileManager *fm=NSFileManager.defaultManager;
-    if([mode isEqualToString:@"readme"]) {
+    if([mode isEqualToString:@"prepare-private-conflict"]) {
+        NSString *original=[lib(appID()) stringByAppendingPathComponent:@"marker.txt"];
+        NSString *nested=[[[data(@"Application Support")
+                             stringByAppendingPathComponent:@"SideloadPersist.Library"]
+                             stringByAppendingPathComponent:appID()]
+                             stringByAppendingPathComponent:@"marker.txt"];
+        put(original,@"ORIGINAL_STAYS");
+        put(nested,@"BACKUP_STAYS");
+        check(PDStorageBootstrap()==PDStorageStateRecovered,@"core migration unaffected by custom Library conflict");
+        scopeChecks();
+        check(!linked(lib(appID())),@"conflicting custom source preserved as normal directory");
+        check([readFile(original) isEqualToString:@"ORIGINAL_STAYS"],@"original custom data not overwritten");
+        check([readFile(nested) isEqualToString:@"BACKUP_STAYS"],@"old custom target not overwritten");
+        check(![PDCustomLibraryVerified() containsObject:appID()],@"conflicting custom folder not reported as mapped");
+        NSDictionary *diag=json([root() stringByAppendingPathComponent:@"library-discovery.json"]);
+        BOOL found=NO;
+        for(NSDictionary *candidate in diag[@"candidates"])
+            if([candidate[@"name"] isEqualToString:appID()] &&
+               [candidate[@"reason"] isEqualToString:@"source-and-target-both-nonempty"])
+                found=YES;
+        check(found,@"custom scope conflict reason diagnosed");
+    } else if([mode isEqualToString:@"prepare-private"]) {
+        NSString *custom=[lib(appID()) stringByAppendingPathComponent:@"marker.txt"];
+        put(custom,@"PRIVATE_OLD");
+        put([lib(@"SplashBoard") stringByAppendingPathComponent:@"system.bin"],@"SYSTEM_UNCHANGED");
+        put([lib(@"UnrelatedSDK") stringByAppendingPathComponent:@"unrelated.bin"],@"UNRELATED_UNCHANGED");
+        check(!PDCustomLibrarySafeName(@"Preferences") &&
+              !PDCustomLibrarySafeName(@"SplashBoard") &&
+              !PDCustomLibrarySafeName(@"com.apple.Accessibility") &&
+              !PDCustomLibrarySafeName(@"../escape") &&
+              PDCustomLibrarySafeName(appID()),@"custom scope names reject system and unsafe entries");
+        check(PDStorageBootstrap()==PDStorageStateRecovered,@"first custom Library directory migrated");
+        scopeChecks();
+        check(linked(lib(appID())),@"app-owned Library directory becomes symlink");
+        check([readFile(custom) isEqualToString:@"PRIVATE_OLD"],@"private app data readable via old path");
+        check(!linked(lib(@"SplashBoard")) && !linked(lib(@"UnrelatedSDK")),
+              @"system and unrelated Library directories never migrated");
+        NSArray *verified=PDCustomLibraryVerified();
+        check(verified.count==1 && [verified containsObject:appID()],
+              @"only verified app-named extra directory selected");
+        NSDictionary *manifest=json([root() stringByAppendingPathComponent:@"manifest.json"]);
+        check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V3"],
+              @"V3 ZIP format remains unchanged with nested custom directory");
+        check([manifest[@"additionalLibraryMappings"] count]==1,
+              @"manifest records extra Library mapping");
+        NSString *readme=readFile([root() stringByAppendingPathComponent:@"README.md"]);
+        check([readme containsString:@"Data/Application Support/SideloadPersist.Library/"] &&
+              [readme containsString:appID()],@"generated README includes custom directory");
+        NSString *zip=[home() stringByAppendingPathComponent:@"private-v3.zip"];
+        archive(zip,YES,NO);
+        prefs(@"PREF_OLD");
+        NSError *error=nil;
+        check(PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error).length==36,
+              [NSString stringWithFormat:@"V3 archive stages nested custom scope: %@",error]);
+        check([readFile(custom) isEqualToString:@"PRIVATE_OLD"],
+              @"staged ZIP has not modified active custom directory");
+        // Simulate the fact that a *newly reinstalled* App no longer has the
+        // original Library/<app-id> link, without deleting the backup contents.
+        check(unlink(lib(appID()).fileSystemRepresentation)==0,
+              @"simulate disappearance of old custom link after reinstall");
+    } else if([mode isEqualToString:@"apply-private"]) {
+        check(PDStorageBootstrap()==PDStorageStateReady,@"V3 archive with custom data restored on cold start");
+        scopeChecks();
+        check(linked(lib(appID())),@"custom source link automatically recreated on new installation");
+        check([readFile([lib(appID()) stringByAppendingPathComponent:@"marker.txt"])
+                isEqualToString:@"PRIVATE_NEW"],@"restored custom data visible through original Library path");
+        check(!linked(lib(@"SplashBoard")) && !linked(lib(@"UnrelatedSDK")),
+              @"unrelated system and SDK directories still unmodified");
+        NSDictionary *manifest=json([root() stringByAppendingPathComponent:@"manifest.json"]);
+        check([manifest[@"additionalLibraryMappings"] count]==1,
+              @"restored custom link appears in machine-readable manifest");
+        NSArray *versions=[fm contentsOfDirectoryAtPath:[root() stringByAppendingPathComponent:@"Backups"] error:nil];
+        check(versions.count==1,@"previous data version preserved");
+        NSString *old=[[[[root() stringByAppendingPathComponent:@"Backups"]
+                         stringByAppendingPathComponent:versions.firstObject]
+                         stringByAppendingPathComponent:@"Data/Application Support/SideloadPersist.Library"]
+                         stringByAppendingPathComponent:appID()];
+        check([readFile([old stringByAppendingPathComponent:@"marker.txt"])
+                isEqualToString:@"PRIVATE_OLD"],@"prior custom Library contents retained in recovery backup");
+    } else if([mode isEqualToString:@"readme"]) {
         check(PDStorageBootstrap()==PDStorageStateRecovered,@"initialize for README");
         scopeChecks();
         NSString *path=[root() stringByAppendingPathComponent:@"README.md"];
