@@ -542,10 +542,18 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     }];
 }
 - (void)tryComplete {
+    if(![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self tryComplete]; });
+        return;
+    }
     if(self.finished || !self.jsDone || !self.cookieDone) return;
     [self complete:self.failures==0];
 }
 - (void)complete:(BOOL)valid {
+    if(![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self complete:valid]; });
+        return;
+    }
     if(self.finished) return;
     self.finished=YES;
     NSString *phase=self.verifying ? @"RESTORE_VERIFICATION" : @"PRE_BACKUP_BASELINE";
