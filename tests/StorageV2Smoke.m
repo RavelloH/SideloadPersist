@@ -44,7 +44,7 @@ static void makeArchive(NSString *path) {
 int main(int argc,char **argv) {
     @autoreleasepool {
         check(argc==2,@"required test mode");
-        NSString *home=NSHomeDirectory();
+        NSString *home=[NSString stringWithUTF8String:getenv("HOME")];
         NSString *root=[home stringByAppendingPathComponent:@"Documents/SideloadPersist"];
         NSString *data=[root stringByAppendingPathComponent:@"Data"];
         NSString *app=[data stringByAppendingPathComponent:@"Application Support"];
@@ -67,8 +67,6 @@ int main(int argc,char **argv) {
             NSString *identifier=PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error);
             check(identifier.length==36,[NSString stringWithFormat:@"v2 archive staged: %@",error]);
             NSString *stage=[root stringByAppendingPathComponent:[NSString stringWithFormat:@"Incoming/%@/Data",identifier]];
-            NSLog(@"DEBUG stage path=%@ content=%@",stage,
-                [fm subpathsOfDirectoryAtPath:[stage stringByDeletingLastPathComponent] error:nil]);
             check([fm fileExistsAtPath:[stage stringByAppendingPathComponent:@"Application Support/test.sqlite"]],
                  @"staged archive data exists");
             check([readFile([app stringByAppendingPathComponent:@"test.sqlite"]) isEqualToString:@"APP_OLD"],

@@ -47,7 +47,8 @@ static BOOL PDV2PreflightScope(NSString *name,NSString *root,NSString *directory
     NSString *stage=[directory stringByAppendingPathComponent:name];
     NSString *target=[[root stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:name];
     NSString *old=[backup stringByAppendingPathComponent:name];
-    NSString *source=[[[NSHomeDirectory() stringByAppendingPathComponent:@"Library"]
+    NSString *home=[PDStorageDocuments() stringByDeletingLastPathComponent];
+    NSString *source=[[[home stringByAppendingPathComponent:@"Library"]
                        stringByAppendingPathComponent:name] stringByStandardizingPath];
     struct stat src={0},dst={0},stg={0},bak={0};
     BOOL hasSource=PDV2Stat(source,&src),hasTarget=PDV2Stat(target,&dst);
