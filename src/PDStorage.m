@@ -3,6 +3,7 @@
 #import "PDV2Restore.h"
 #import "PDReadme.h"
 #import "PDPreferencesHook.h"
+#import "PDPreferencesBackend.h"
 #import "PDCustomLibrary.h"
 #import <sys/stat.h>
 #import <unistd.h>
@@ -30,7 +31,10 @@ NSString *PDStorageTarget(void) {
 }
 NSString *PDStorageInbox(void) { return [PDStorageRoot() stringByAppendingPathComponent:@"Inbox"]; }
 PDStorageState PDStorageGetState(void) { return s_state; }
-NSString *PDStorageStatusText(void) { return s_status ?: @"未知状态"; }
+NSString *PDStorageStatusText(void) {
+    NSString *warning=PDPreferencesIntegrityWarning();
+    return warning ?: (s_status ?: @"未知状态");
+}
 BOOL PDStorageIsFileSharingEnabled(void) {
     id a = NSBundle.mainBundle.infoDictionary[@"UIFileSharingEnabled"];
     id b = NSBundle.mainBundle.infoDictionary[@"LSSupportsOpeningDocumentsInPlace"];
