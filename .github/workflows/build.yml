@@ -43,6 +43,9 @@ jobs:
           TEST_HOME="$(mktemp -d)"
           HOME="$TEST_HOME" /tmp/pd-storage-smoke prepare
           HOME="$TEST_HOME" /tmp/pd-storage-smoke apply
+          BARE_HOME="$(mktemp -d)"
+          HOME="$BARE_HOME" /tmp/pd-storage-smoke prepare-bare
+          HOME="$BARE_HOME" /tmp/pd-storage-smoke apply-bare
       - name: Build independent unsigned PickerProbe IPA
         shell: bash
         run: |

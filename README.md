@@ -1,94 +1,80 @@
-# SideloadPersist (experimental)
+# SideloadPersist — iOS 数据持久化 dylib（实验性）
 
-An **unsigned arm64 iOS dylib** for controlled sideloading experiments. It presents a folder picker on first launch, remembers its security-scoped bookmark, and maps a subset of the app's **Documents** file access to the selected folder's `Documents/` subdirectory.
+**v0.8：目录级重定位，不再依赖外部文件夹选择器，也不依赖证书的 Bundle ID 与 `application-identifier` 匹配。**
 
-## State / limitations
+## 运行机制
 
-**v0.7 adds signed-identity preflight checks.** Controlled real-device iOS 27.0.1 tests established that a mismatched signed `application-identifier` suffix versus `CFBundleIdentifier` made both file and folder pickers unresponsive. After the two values matched, both worked immediately **without any private API Hook**. SideloadPersist now detects a known mismatch, clearly shows the two IDs, and disables its picker buttons until the IPA is correctly re-signed. When the entitlement is unreadable, preflight remains permissive rather than guessing.
+插件在 dyld 启动加载时，首先同步执行文件系统初始化，尽量阻止 App 主程序在迁移期间运行（但不保证阻止此前系统框架启动的文件访问）。仅对 `Library/Application Support` 执行同卷 `rename()`，然后建立符号链接：
 
-- Requires injection into an IPA and re-signing of the entire app and embedded frameworks with your signer. The build artifact is deliberately unsigned.
-- Supports iOS 15+ at build time; actual iOS 27.0.1 behavior **not yet device-tested**.
-- Shows a **full-screen modal gate inside the host app's own UIWindow hierarchy**. Earlier builds used a separate elevated UIWindow and could interfere with the document picker. This change has compiled successfully but is **not yet verified on iOS 27**. The gate cannot suspend arbitrary third-party app background threads or early application initialization.
-- Only `Documents` is mapped, through `NSSearchPathForDirectoriesInDomains`, a subset of `NSFileManager` and selected POSIX calls. **Not** a transparent replacement for all file APIs, SQLite's VFS, Swift or WebKit storage.
-- `Library`, preferences, caches, app groups and **Keychain are NOT redirected**.
-- POSIX APIs that bypass coordination are not safe for concurrent cloud synchronization. For tests, choose an independent local file provider folder and use simple text files. **Do not test on important apps or live databases.**
-- The saved bookmark lives in the original sandbox; after deleting/reinstalling, select the *same* folder again. Using a different Bundle ID is supported if the selected external folder is the same. App data not mapped from Documents remains tied to the old installation.
-- Folder-picker providers may not grant the needed write permissions; failure leaves the gate visible with an error. The gate rejects choosing a folder within the target app's own sandbox, since this would not survive uninstall. An inaccessible/stale bookmark prompts for selection again.
-- When the native picker appears inside the target app's **own** location (such as “On My iPhone / AppName”), tap Back to the location browser and choose a **different** durable provider folder, e.g., a dedicated test folder on iCloud Drive. Do not assume the current app's root is a selectable external directory.
-- To investigate an unresponsive **Open** button, the gate provides **选择外部文件夹（标准）** (the officially documented folder picker with default system presentation) and **兼容模式重试** (deprecated open-mode initializer with over-full-screen presentation). The compatibility mode is exploratory, not guaranteed to fix an iOS File Provider issue. Neither mode can capture the native button tap; diagnostics record successful URL delivery, cancellation and prolonged pending state.
-- **Until directory authorization succeeds, the injected dylib does NOT install fishhook or NSFileManager method hooks.** This isolates the system picker from our redirection hooks. It does not guarantee that the host app cannot alter the picker.
-- **LiveContainer-style Fix File Picker (OFF by default; legacy experimental option, not recommended):** A user-toggleable experiment inspired by LiveContainer's newer fix, not its legacy Inbox copy mode. When enabled, it attempts to swizzle the private `DOCConfiguration.setHostIdentifier:` setter and supplies the bundle portion of the **actual `application-identifier` code-signing entitlement**. It never edits entitlements or accesses other app sandboxes. The hook may be unavailable on some iOS versions; inspect diagnostics for `installed=yes`, `DOCConfiguration hostIdentifier`, and the signed/plist bundle IDs. Turning the setting off disables rewriting (though an installed method shim remains until process restart). The independent PickerProbe app has the same toggle for A/B tests. **Use only on throwaway test installs; private APIs carry crash and compatibility risks.**
-- The gate includes **诊断：选择一个普通文件**. Select a preexisting PDF, TXT, JSON or image file. The code only records whether a URL callback arrived (scheme/extension, not file contents); it does not activate redirection or mutate the file. This distinguishes generic document selection problems from directory-only selection problems.
-- The **built-in diagnostics screen** shows timestamped logs for picker presentation, modern/legacy callbacks, security-scoped access, file coordination and bookmark saving. On the initial gate tap **查看诊断日志**. After activating a folder, tap the small **日志** button at the lower right. The screen can refresh, copy, and clear the log. Native `NSLog` output remains available with prefix `[SideloadPersist]`.
-- Do not mix multiple apps into the same selected folder; each app should use a separate root.
-
-## Build
-
-GitHub Actions: run **Build experimental dylib** manually, or push to `main`. Two artifacts are generated: `SideloadPersist-ios-arm64-unsigned` (the injectable dylib) and `PickerProbe-unsigned-ipa` (an independent, unsigned, **unmodified** control IPA). The latter must be signed with your own device-compatible profile before installing; it contains no SideloadPersist dylib.
-
-Local macOS Xcode command-line tools: `make all`.
-
-The `dist/SideloadPersist.dylib` must be placed in the app's Frameworks directory, registered as a load command by an IPA injector, and re-signed with the rest of the IPA. This repository deliberately does not alter or upload any user IPA or signing certificates.
-
-## Test
-
-1. Back up the target app and use a disposable sample IPA with a test file in `Documents`.
-2. Inject `SideloadPersist.dylib`, sign and install.
-3. For diagnostic isolation, first tap **诊断：选择一个普通文件** and choose an existing file in Files / iCloud Drive. Check the resulting status and logs. Then tap **选择外部文件夹（标准）**. If the picker shows the target app's own empty folder, go back to **Browse Locations** and navigate to a dedicated subfolder in iCloud Drive or another independent provider. Tap “打开”. Grant access and observe the gate closing. If **Open** fails, cancel and try **兼容模式重试** with the *same external subfolder*.
-4. Create/read a simple file using `NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)` or `NSFileManager`. It should appear under `<selected folder>/Documents/`.
-5. Fully restart the app. It should restore the bookmark without prompting.
-6. If the app is deleted and reinstalled, it should prompt again; select the exact same folder and verify the file is still available.
-7. Record Console logs tagged `[SideloadPersist]`. Compare before/after file paths.
-8. Do **not** attempt to migrate an existing app by overwrite until a controlled test succeeds.
-
-## Why not real app suspension?
-
-A third-party injected library is loaded inside an arbitrary process. Blocking its main thread before `UIApplication` is ready prevents showing a document picker. The current prototype waits for a foreground active scene, then presents a full-screen modal from the **host app's view controller** and presents the system directory picker from that modal. This prevents an alert-level UIWindow from potentially intercepting picker touches, but it gates **user interaction only**, not arbitrary background work.
-
-## Troubleshooting native folder selection
-
-- **Tapping “打开” does nothing:** If still inside “On My iPhone / <AppName>”, go back to the Files location browser and choose a dedicated folder from another provider. Some locations or provider roots do not support external folder grants.
-- **The document picker never returns:** Cancel/back out of the Files picker, tap **查看诊断日志**, then **刷新** and **复制**. Check for `Directory picker presented` followed by `Picker returned ...`. If the second entry is absent, the picker did not invoke its delegate and the issue is in the presentation / provider / iOS interaction, not file redirection. If the app crashes or must be relaunched, log history normally survives in its **Library/Application Support/SideloadPersist/diagnostics.log**.
-- **The picker returns but activation fails:** Read the new displayed validation error and logs for security-scoped access, file coordination and bookmark saving.
-- **Suggested v0.6 A/B:** In the independent PickerProbe test app, first select an ordinary file and a dedicated iCloud Drive folder with the new compatibility toggle OFF. Turn ON the LiveContainer-style fix and repeat with the same locations. If both fail, inspect whether the log says `DOCConfiguration ... installed` and whether `hostIdentifier` setter was actually intercepted. Report only the app IDs and diagnostic events, not personal file locations. Repeating in the injected CiliCili app is a secondary comparison.
-- **Attribution:** The host-identifier compatibility approach is informed by LiveContainer's open source `TweakLoader/DocumentPicker.m` (LiveContainer/LiveContainer; AGPL-3.0). Our implementation was independently written in `src/PDPickerHostFix.m` using runtime lookup and Security framework, without copying LiveContainer source.
-- **Still broken on v0.6:** Try the separate unsigned `PickerProbe-unsigned.ipa` signed as a new standalone app (no injection; unique Bundle ID). Compare **file** and **folder** selection there with the same provider and subfolder. If that independent app also cannot select folders, investigate File Provider or iOS behavior rather than modifying host-app hooks. Copy only needed logs and redact private paths.
-- Neither the injected dylib nor the independent IPA can intercept the system-owned **Open** button tap; only picker callbacks and pending state are observable. This is compiled and smoke-tested in CI, not yet verified on iOS 27 hardware.
-
-## Signed identity mismatch experiment (recommended after v0.6 HostFix fails)
-
-On a real iOS 27.0.1 device we observed:
-
-- `Info.plist CFBundleIdentifier = com.ravelloh.pickerprobe`
-- signed `application-identifier` suffix = `app.crystal7397.mango7474`
-- LiveContainer-inspired `DOCConfiguration.setHostIdentifier` hook was installed and invoked, but **neither file nor folder picker returned a URL**.
-
-**Follow-up test result:** On the same iOS 27.0.1 device, an independently built/signed PickerProbe with `Info.plist CFBundleIdentifier = app.crystal7397.mango7474` and a matching actual signed entitlement (`signedBundle=app.crystal7397.mango7474`) immediately received **both** folder and ordinary-file success callbacks **with HostFix OFF**. This paired A/B confirms an identity mismatch was the cause in this tested signing setup, not that every iOS file-picker failure everywhere has the same cause. The identifier above is a test-specific value, not a universal App ID.
-
-The independent PickerProbe app now logs `IDENTITY_MISMATCH` if it detects a discrepancy. To produce a new unsigned IPA for the comparison, use:
-
-```sh
-python scripts/prepare_matched_ipa.py dist/PickerProbe-unsigned.ipa dist/PickerProbe-matched-unsigned.ipa app.crystal7397.mango7474
+```text
+App 沙盒/
+├─ Documents/
+│  └─ SideloadPersist/
+│     ├─ Data/
+│     │  └─ Application Support/       ← 真实、唯一的数据源
+│     ├─ Inbox/                        ← 手动复制 ZIP 后可扫描
+│     ├─ Incoming/                     ← ZIP 恢复暂存
+│     ├─ Backups/                      ← 恢复前的数据，不自动清理
+│     └─ manifest.json
+└─ Library/
+   └─ Application Support → Documents/SideloadPersist/Data/Application Support
 ```
 
-Or use **Actions → Build experimental dylib → Run workflow**, supplying `matched_bundle_id=app.crystal7397.mango7474`, then download the additional `PickerProbe-matched-unsigned-ipa` artifact. This input is optional; ordinary push builds continue to create the standard two artifacts.
+原始路径可继续通过 Foundation、POSIX、SQLite、CoreData 等 API 访问，具体兼容性须用真机测试。源目录与目标目录都含有数据时，停止重定位，不自动合并/覆盖。迁移出错也不得删除原数据。
 
-Then sign the **patched IPA** with the same signer/certificate that produced the previously observed entitlement value, and install it independently. Do not inject any dylib. Re-open its logs and verify `signedBundle == plistBundle` in the **final signed app**; the signing tool may rewrite them again. Only then repeat the file and folder picker tests. Test with the HostFix toggle OFF first to avoid confounding factors. If the signed IDs still mismatch, change the signer configuration so it signs the intended bundle identifier, or use a compatible provisioning profile. Never manually forge entitlements to bypass provisioning constraints.
+**当前不会重定位**：`Library/Preferences`、`Library/Caches`、`Library/WebKit`、`tmp`、Keychain、App Groups。不能将这版当作“所有 App 数据已经备份”。
 
-The patch script rejects already-signed input: modifying a signed IPA invalidates its signature, and the output must always be signed again. **Do not rename the user's production app bundle ID** without a backup or considering its identity-dependent services. This experiment is for the disposable PickerProbe app only.
+## 首次介绍页
 
-## SideloadPersist v0.7 preflight behavior
+完成同步初始化后，等 App 存在一个有效前台 Scene，自动以半屏 Sheet 展示一次介绍页：当前 App 在「文件」中的目录路径、打开「文件」、导入备份 ZIP、恢复说明和完成按钮。确认完成后静默运行，不驻留悬浮按钮或轮询监听。
 
-At launch the injected dylib reads the actual signed `application-identifier` entitlement and compares its Bundle ID suffix with `NSBundle.mainBundle.bundleIdentifier`. If both are available but differ, the first-launch gate displays both values, logs `Signed identity preflight: ... mismatch=YES`, and disables **选择外部文件夹（标准）**, **兼容模式重试**, and the ordinary-file probe. It does **not** attempt to fake the code signature, forge entitlements, or bypass sandbox permissions. Diagnostics remain available. Once the IPA has been correctly signed, reinstall and restart to re-run the preflight.
+「打开文件 App」尝试 `shareddocuments://`（非 Apple 公开 API，可能失效），失效时显示手动导航路径。文件夹在「文件」中的可见性依赖**签名后的 App Info.plist**：
 
-For CiliCili and any other third-party IPA, **prefer retaining the intended Bundle ID** and configuring the signer/profile to produce the matching entitlement. Renaming the app's Bundle ID may alter its storage identity, URL schemes, login/session behavior, extensions or app group access; test on a backed-up disposable install first. The test-only app ID in the previous section must not be copied indiscriminately into production IPA signatures.
+```xml
+<key>UIFileSharingEnabled</key><true/>
+<key>LSSupportsOpeningDocumentsInPlace</key><true/>
+```
 
-The preflight is not a test of external directory persistence: once authorized, the separate Documents path redirection and security-scoped bookmark still need real-device testing, particularly for app data stored in Library, SQLite and cloud-synced file providers.
+签名工具可以提供「开启文件访问」开关；dylib 自己不能在运行时为系统注册文件提供器。
 
-## Security note
+## 手动恢复
 
-The code does not attempt to bypass iOS sandboxing. It only accesses user-authorized folders. Never use another app's private data directory or assume a file-provider URL will support arbitrary POSIX operations or database concurrency.
+1. **原 App 仍安装时**，在「文件」App 中找到「在我的 iPhone > 原 App > SideloadPersist」，将其完整复制到其他位置（包括 `Data`）。签名过期但尚未删除时，在目前实测环境中仍可读取 Documents。
+2. 删除原 App、重新签名安装后，先启动一次，让插件建立目录，再返回「文件」App。注意**删除 App 会删除 App 自己的 Documents**。
+3. 可先在「文件」App 复制备份中的 `Data/Application Support` 到新 App 的同名目标位置，再重新启动，或者使用首次介绍页的「导入备份 ZIP」按钮。
 
-## Licensing
+ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP 放进 `SideloadPersist/Inbox/` 再点「扫描 Inbox 中的 ZIP」。若签名身份不匹配导致系统选择器失效，仍能使用 Inbox。
 
-Our code is MIT-licensed (see `LICENSE`). The `vendor/fishhook` directory contains Facebook's fishhook source under its original BSD-style LICENSE.
+可导入 ZIP 的内容布局：
+
+- `SideloadPersist/Data/Application Support/...`
+- `Data/Application Support/...`
+- `Library/Application Support/...`
+- `Application Support/...`
+- 单层包装目录或直接包含 Application Support 的内容
+
+**导入不会即时覆盖正在运行的数据库。** ZIP 先做路径、安全类型、大小校验并解压到 `Incoming/UUID`；提交待恢复标记，完全退出并冷启动后才将旧目标文件夹移动到 `Backups/UUID`，再安装新目标。若中断，会尝试修复或保留原目录。当前仅导入 Application Support；不自动迁移 Preferences/Keychain。
+
+不要在 App 活跃写入 SQLite WAL 时压缩文件。恢复时仍需验证数据库完整性。导出到公开的 Documents 也可能暴露敏感账号数据，请谨慎保管。
+
+## 测试项目
+
+GitHub Actions 自动生成（未签名）：
+
+- `SideloadPersist-ios-arm64-unsigned`：注入式 dylib；
+- `StorageProbe-unsigned-ipa`：测试 `NSFileManager`、`NSData`、`NSFileHandle`、POSIX `open/write/stat`、`stdio`、SQLite WAL、CoreData SQLite、NSUserDefaults；
+- `PickerProbe-unsigned-ipa`：保留的文件选择器兼容性测试。
+
+**StorageProbe 不自带 dylib。** 使用 LCSign 等工具注入 dylib、开启文件共享、签名安装，打开 StorageProbe 后按「运行存储 API 测试」，复制结果并在「文件」App 中确认 `SideloadPersist/Data/Application Support/StorageProbe` 下确实存在文件。重新启动再运行，检查文件和数据库能否继续读取。不要直接在重要 App 上测试首次目录迁移。
+
+CI 另在 macOS 隔离 HOME 环境中验证原子迁移、符号链接路径读写、恶意 ZIP 穿越拦截、ZIP 暂存以及重新启动恢复；**这些并非 iOS 27.0.1 的真机测试**。
+
+本地 macOS/Xcode 编译：`make all`。
+
+## 源码结构与许可
+
+- 新架构：`PDEntry.m`、`PDStorage.m`、`PDIntro.m`、`PDArchive.m`。
+- `PDGate.m`、`PDHooks.m`、`PDRedirect.m` 等为早期技术参考，**不参与当前编译**。
+- 项目 MIT；`vendor/miniz` 保留原 MIT 许可；历史 fishhook 亦保留原许可证。
+
+本项目不会包含任何用户证书、私钥，不自动发布 Release。

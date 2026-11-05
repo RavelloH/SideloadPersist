@@ -108,6 +108,10 @@ static BOOL PDApplyPendingRestore(void) {
     BOOL haveStage=PDStat(incoming,&st) && S_ISDIR(st.st_mode);
     BOOL haveTarget=PDStat(target,&st);
     BOOL haveBackup=PDStat(backup,&st);
+    if (haveStage && haveTarget && haveBackup) {
+        PDStorageTrace(@"Ambiguous pending restore: target, backup and stage all exist. Refusing overwrite.");
+        return NO;
+    }
     if (!haveStage) {
         if (!haveTarget && haveBackup && rename(backup.fileSystemRepresentation,target.fileSystemRepresentation)==0) {
             PDStorageTrace(@"Recovered previous data after interrupted restore");
@@ -168,6 +172,7 @@ PDStorageState PDStorageBootstrap(void) {
         struct stat src={0},dst={0};
         BOOL hasSource=PDStat(source,&src);
         BOOL hasTarget=PDStat(target,&dst);
+        BOOL movedOriginal=NO;
         if (hasSource && !S_ISDIR(src.st_mode)) {
             PDSetStatus(PDStorageStateConflict,@"原始目录不是普通文件夹，已停止迁移");
             return s_state;
@@ -186,6 +191,7 @@ PDStorageState PDStorageBootstrap(void) {
                 return s_state;
             }
             hasSource=NO; hasTarget=YES;
+            movedOriginal=YES;
             PDStorageTrace(@"Moved original Application Support by atomic rename");
         } else if (!hasTarget) {
             if (!PDCreateDir(target)) {
@@ -202,8 +208,17 @@ PDStorageState PDStorageBootstrap(void) {
             hasSource=NO;
         }
         if (!hasSource && symlink(target.fileSystemRepresentation,source.fileSystemRepresentation)!=0) {
-            // Do not delete target. On the next launch, the missing source is repaired.
-            PDSetStatus(PDStorageStateFailed,[NSString stringWithFormat:@"符号链接创建失败：%s",strerror(errno)]);
+            int errorNumber=errno;
+            if (movedOriginal) {
+                if (rename(target.fileSystemRepresentation,source.fileSystemRepresentation)==0)
+                    PDStorageTrace(@"Symbolic link creation failed; original directory restored by rollback");
+                else
+                    PDStorageTrace(@"CRITICAL: symlink failed and rollback failed (%s); data remains at %@",strerror(errno),target);
+            } else if (!PDStat(source,&src)) {
+                // Preserve ordinary Application Support behavior on an empty first launch.
+                PDCreateDir(source);
+            }
+            PDSetStatus(PDStorageStateFailed,[NSString stringWithFormat:@"符号链接创建失败（已尝试回滚）：%s",strerror(errorNumber)]);
             return s_state;
         }
         if (!PDLinkMatches(source,target)) {

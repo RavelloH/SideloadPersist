@@ -67,6 +67,20 @@ int main(int argc,char **argv) {
                 @"Documents/SideloadPersist"] stringByAppendingPathComponent:@"Backups"] error:nil];
             check(backups.count==1,@"previous data preserved as backup");
             NSLog(@"All restore smoke tests passed.");
+        } else if (strcmp(argv[1],"prepare-bare")==0) {
+            check(PDStorageBootstrap()==PDStorageStateRecovered,@"new sandbox initialized");
+            NSString *zipPath=[home stringByAppendingPathComponent:@"bare.zip"];
+            makeZip(zipPath,"only.txt","BARE_PAYLOAD");
+            NSError *error=nil;
+            check(PDArchiveStageZIP([NSURL fileURLWithPath:zipPath],&error).length==36,
+                  [NSString stringWithFormat:@"bare-root ZIP import staged: %@",error ?: @"ok"]);
+            NSLog(@"All bare ZIP preparation tests passed.");
+        } else if (strcmp(argv[1],"apply-bare")==0) {
+            check(PDStorageBootstrap()==PDStorageStateReady,@"bare ZIP applied on cold boot");
+            NSString *result=[NSString stringWithContentsOfFile:[source stringByAppendingPathComponent:@"only.txt"]
+                                                      encoding:NSUTF8StringEncoding error:nil];
+            check([result isEqualToString:@"BARE_PAYLOAD"],@"single-file root ZIP retained its filename");
+            NSLog(@"All bare ZIP restore tests passed.");
         } else fail(@"invalid mode");
         return 0;
     }

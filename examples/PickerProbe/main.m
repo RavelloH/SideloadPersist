@@ -43,7 +43,7 @@
     title.font=[UIFont boldSystemFontOfSize:25];
     title.textAlignment=NSTextAlignmentCenter;
     UILabel *desc=[[UILabel alloc] init];
-    desc.text=@"独立 iOS 测试 App，不注入任何 dylib。\n在 iCloud Drive 中选择已有子文件夹，或选择普通文件。";
+    desc.text=@"无文件 Hook 的独立测试 App。\n对比外部文件夹、原地打开文件、复制导入文件。";
     desc.numberOfLines=0;
     desc.textAlignment=NSTextAlignmentCenter;
     desc.textColor=UIColor.secondaryLabelColor;
@@ -70,14 +70,15 @@
     fixRow.axis=UILayoutConstraintAxisHorizontal;
     fixRow.spacing=10;
     fixRow.distribution=UIStackViewDistributionEqualSpacing;
-    UIButton *folder=[self button:@"① 选择外部文件夹" action:@selector(selectFolder)];
-    UIButton *file=[self button:@"② 选择普通文件" action:@selector(selectFile)];
+    UIButton *folder=[self button:@"① 选择外部文件夹（Open）" action:@selector(selectFolder)];
+    UIButton *file=[self button:@"② 原地打开普通文件（Open）" action:@selector(selectFile)];
+    UIButton *importFile=[self button:@"③ 导入普通文件副本（Import）" action:@selector(importFile)];
     UIButton *copy=[self button:@"复制日志" action:@selector(copyLogs)];
     UIButton *clear=[self button:@"清空日志" action:@selector(clearLogs)];
     UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[copy,clear]];
     row.axis=UILayoutConstraintAxisHorizontal;
     row.distribution=UIStackViewDistributionFillEqually;
-    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,desc,fixRow,folder,file,self.status,self.logs,row]];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,desc,fixRow,folder,file,importFile,self.status,self.logs,row]];
     stack.axis=UILayoutConstraintAxisVertical;
     stack.spacing=9;
     stack.translatesAutoresizingMaskIntoConstraints=NO;
@@ -94,6 +95,9 @@
     PDPickerHostFixSetLogger(^(NSString *message) { [weakSelf record:@"HostFix: %@",message]; });
     PDPickerHostFixSetEnabled(self.hostFixSwitch.on);
     [self record:@"Probe launched; iOS=%@; bundle=%@; no filesystem hooks; %@",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier,PDPickerHostFixStatus()];
+    [self record:@"Plist flags: UIFileSharingEnabled=%@ LSSupportsOpeningDocumentsInPlace=%@",
+        [NSBundle.mainBundle objectForInfoDictionaryKey:@"UIFileSharingEnabled"] ?: @"unset",
+        [NSBundle.mainBundle objectForInfoDictionaryKey:@"LSSupportsOpeningDocumentsInPlace"] ?: @"unset"];
     NSString *signedID = PDPickerHostFixActualBundleID();
     NSString *plistID = NSBundle.mainBundle.bundleIdentifier;
     if (signedID.length && ![signedID isEqualToString:plistID]) {
@@ -110,27 +114,36 @@
     [self record:@"HostFix changed: %@",PDPickerHostFixStatus()];
     self.status.text=sender.on ? @"已开启真实签名身份修复，请重新选择文件/文件夹" : @"修复已关闭（可对照测试）";
 }
-- (void)selectFolder { [self openType:@[UTTypeFolder] kind:@"folder"]; }
-- (void)selectFile { [self openType:@[UTTypeData,UTTypeContent] kind:@"file"]; }
-- (void)openType:(NSArray<UTType *> *)types kind:(NSString *)kind {
+- (void)selectFolder { [self openType:@[UTTypeFolder] kind:@"folder-open" copy:NO]; }
+- (void)selectFile { [self openType:@[UTTypeData,UTTypeContent] kind:@"file-open" copy:NO]; }
+- (void)importFile { [self openType:@[UTTypeData,UTTypeContent] kind:@"file-copy" copy:YES]; }
+- (void)openType:(NSArray<UTType *> *)types kind:(NSString *)kind copy:(BOOL)copy {
     self.currentKind=kind;
     if (PDPickerHostFixIsEnabled()) PDPickerHostFixPrepareBeforePicker();
-    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:types asCopy:copy];
+#pragma clang diagnostic pop
     // DOCConfiguration may only be loaded after picker initialization.
     if (PDPickerHostFixIsEnabled()) PDPickerHostFixInstallIfAvailable();
     [self record:@"HostFix status before picker presentation: %@",PDPickerHostFixStatus()];
     picker.delegate=self;
     picker.allowsMultipleSelection=NO;
-    [self record:@"Opening picker; type=%@; presentation=%ld",kind,(long)picker.modalPresentationStyle];
+    [self record:@"Opening picker; type=%@; asCopy=%@; presentation=%ld",kind,copy ? @"yes" : @"no",(long)picker.modalPresentationStyle];
     [self presentViewController:picker animated:YES completion:^{
         [self record:@"Picker presented; type=%@",kind];
     }];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    [self record:@"Picker success callback; type=%@; count=%lu; isFileURL=%@",
-        self.currentKind,(unsigned long)urls.count,urls.firstObject.isFileURL?@"yes":@"no"];
+    NSString *home = NSHomeDirectory().stringByStandardizingPath;
+    NSString *selectedPath = urls.firstObject.path.stringByStandardizingPath;
+    BOOL insideSandbox = selectedPath.length && home.length &&
+        ([selectedPath hasPrefix:[home stringByAppendingString:@"/"]] || [selectedPath isEqualToString:home]);
+    [self record:@"Picker success callback; type=%@; count=%lu; isFileURL=%@; returnedInsideAppSandbox=%@ (path hidden)",
+        self.currentKind,(unsigned long)urls.count,urls.firstObject.isFileURL?@"yes":@"no",insideSandbox?@"yes":@"no"];
     self.status.text=[NSString stringWithFormat:@"%@ 选择成功：%lu URL(s)",self.currentKind,(unsigned long)urls.count];
-    // Do not read, copy, or access contents; this is strictly an API callback probe.
+    // Do not read/copy user file contents or expose file paths in logs.
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentAtURL:(NSURL *)url {
     [self record:@"Legacy single-URL callback; type=%@",self.currentKind];

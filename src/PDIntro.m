@@ -5,7 +5,6 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static NSString *const kIntroShown=@"SideloadPersist.IntroAccepted.v2";
-static __weak UIViewController *s_presenter=nil;
 static BOOL s_presenting=NO;
 
 @interface PDIntroController : UIViewController <UIDocumentPickerDelegate>
@@ -46,7 +45,6 @@ static BOOL s_presenting=NO;
                 }
             }
             s_presenting=YES;
-            s_presenter=top;
             PDStorageTrace(@"Presenting first-run introduction sheet");
             [top presentViewController:intro animated:YES completion:nil];
             return;
@@ -85,7 +83,7 @@ void PDIntroInstall(void) {
         [btn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     } else btn.backgroundColor=UIColor.tertiarySystemFillColor;
     btn.layer.cornerRadius=12;
-    btn.contentEdgeInsets=UIEdgeInsetsMake(12,12,12,12);
+    [btn.heightAnchor constraintGreaterThanOrEqualToConstant:46].active=YES;
     [btn addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return btn;
 }
@@ -227,7 +225,6 @@ void PDIntroInstall(void) {
 - (void)accept {
     [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kIntroShown];
     s_presenting=NO;
-    [[PDIntroManager shared] class]; // retain shared manager for observer lifetime
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 @end

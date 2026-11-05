@@ -64,7 +64,9 @@ static NSString *PDArchiveFilename(mz_zip_archive *zip, mz_uint idx) {
     char *buffer=calloc((size_t)len+2,1);
     if (!buffer) return nil;
     mz_zip_reader_get_filename(zip,idx,buffer,len+1);
-    NSString *result=[[NSString alloc] initWithBytes:buffer length:strlen(buffer) encoding:NSUTF8StringEncoding];
+    size_t realLen=strlen(buffer);
+    // Reject embedded-NUL names instead of silently truncating to a benign prefix.
+    NSString *result=(realLen==len) ? [[NSString alloc] initWithBytes:buffer length:realLen encoding:NSUTF8StringEncoding] : nil;
     free(buffer);
     return result;
 }
@@ -104,6 +106,7 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
     NSString *identifier=nil;
     NSString *stage=nil;
     NSUInteger extracted=0;
+    NSMutableSet<NSString *> *extractedPaths=[NSMutableSet set];
     for (mz_uint i=0;i<count;i++) {
         mz_zip_archive_file_stat stat={0};
         NSString *raw=PDArchiveFilename(&zip,i);
@@ -132,6 +135,14 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
         [entries addObject:@{@"index":@(i),@"path":safe,@"dir":@(directory)}];
     }
     commonRoot=(!knownRoot && firstParts.count==1) ? firstParts.anyObject : nil;
+    if (commonRoot) {
+        BOOL hasChild=NO;
+        NSString *prefix=[commonRoot stringByAppendingString:@"/"];
+        for (NSDictionary *entry in entries) {
+            if ([entry[@"path"] hasPrefix:prefix]) {hasChild=YES;break;}
+        }
+        if (!hasChild) commonRoot=nil; // a single file is not an enclosing folder
+    }
     identifier=NSUUID.UUID.UUIDString;
     stage=[[[PDStorageRoot() stringByAppendingPathComponent:@"Incoming"]
                          stringByAppendingPathComponent:identifier]
@@ -150,6 +161,12 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
             else relative=original;
         }
         if (!relative.length) continue;
+        NSString *key=relative.lowercaseString;
+        if ([extractedPaths containsObject:key]) {
+            PDImportError(error,10,@"ZIP 包含重复或大小写冲突的路径，已拒绝导入");
+            goto failureStage;
+        }
+        [extractedPaths addObject:key];
         NSString *destination=[stage stringByAppendingPathComponent:relative];
         if ([entry[@"dir"] boolValue]) {
             if (![[NSFileManager defaultManager] createDirectoryAtPath:destination
