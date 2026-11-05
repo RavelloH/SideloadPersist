@@ -1,4 +1,5 @@
 #import "PDV2Archive.h"
+#import "PDArchive.h"
 #import "PDStorage.h"
 #import "PDPreferencesBackend.h"
 #import "miniz.h"
@@ -112,12 +113,84 @@ BOOL PDV2ZIPHasExtraScopes(NSURL *url) {
     if(access) [url stopAccessingSecurityScopedResource];
     return found;
 }
+
+// A manifest's originalBundleID is a continuity check, not a signature.
+// Old exports without it must be explicitly approved by the user.
+PDArchiveIdentityState PDArchiveInspectIdentity(NSURL *url,NSString **sourceBundleID) {
+    if(sourceBundleID) *sourceBundleID=nil;
+    if(!url.isFileURL || ![url.pathExtension.lowercaseString isEqualToString:@"zip"])
+        return PDArchiveIdentityStateInvalid;
+    BOOL access=[url startAccessingSecurityScopedResource];
+    mz_zip_archive zip={0};
+    if(!mz_zip_reader_init_file(&zip,url.fileSystemRepresentation,0)) {
+        if(access) [url stopAccessingSecurityScopedResource];
+        return PDArchiveIdentityStateInvalid;
+    }
+    PDArchiveIdentityState state=PDArchiveIdentityStateLegacyUnknown;
+    BOOL seen=NO;
+    mz_uint count=mz_zip_reader_get_num_files(&zip);
+    if(!count || count>100000) state=PDArchiveIdentityStateInvalid;
+    else for(mz_uint i=0;i<count;i++) {
+        NSString *name=PDV2SafePath(PDV2Name(&zip,i));
+        if(!name) {state=PDArchiveIdentityStateInvalid;break;}
+        if(!([name isEqualToString:@"manifest.json"] ||
+             [name isEqualToString:@"SideloadPersist/manifest.json"] ||
+             [name hasSuffix:@"/SideloadPersist/manifest.json"])) continue;
+        if(seen) {state=PDArchiveIdentityStateInvalid;break;}
+        seen=YES;
+        mz_zip_archive_file_stat stat={0};
+        if(!mz_zip_reader_file_stat(&zip,i,&stat) ||
+           stat.m_uncomp_size>65536 || mz_zip_reader_is_file_encrypted(&zip,i)) {
+            state=PDArchiveIdentityStateInvalid;break;
+        }
+        size_t length=0;
+        void *buffer=mz_zip_reader_extract_to_heap(&zip,i,&length,0);
+        NSData *bytes=buffer?[NSData dataWithBytes:buffer length:length]:nil;
+        if(buffer) mz_free(buffer);
+        NSDictionary *manifest=bytes?[NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil]:nil;
+        if(![manifest isKindOfClass:NSDictionary.class] ||
+           ![@[@"SideloadPersist.Directory.V1",
+                @"SideloadPersist.Directory.V2",
+                @"SideloadPersist.Directory.V3"] containsObject:manifest[@"format"]]) {
+            state=PDArchiveIdentityStateInvalid;break;
+        }
+        id value=manifest[@"originalBundleID"];
+        if(!value || value==NSNull.null) {
+            state=PDArchiveIdentityStateLegacyUnknown;
+            continue;
+        }
+        if(![value isKindOfClass:NSString.class] || ![value length] || [value length]>256) {
+            state=PDArchiveIdentityStateInvalid;break;
+        }
+        if(sourceBundleID) *sourceBundleID=[value copy];
+        NSString *destination=NSBundle.mainBundle.bundleIdentifier;
+        state=(destination.length && [value isEqualToString:destination]) ?
+            PDArchiveIdentityStateMatch : PDArchiveIdentityStateDifferentApp;
+    }
+    mz_zip_reader_end(&zip);
+    if(access) [url stopAccessingSecurityScopedResource];
+    return state;
+}
+
 static void PDV2Fail(NSError **error,NSInteger code,NSString *message) {
     if(error) *error=[NSError errorWithDomain:PDV2ErrorDomain code:code
         userInfo:@{NSLocalizedDescriptionKey:message}];
     PDStorageTrace(@"V2 ZIP refused: %@",message);
 }
-NSString *PDV2StageZIP(NSURL *url,NSError **error) {
+NSString *PDV2StageZIP(NSURL *url,BOOL userApprovedException,NSError **error) {
+    NSString *source=nil;
+    PDArchiveIdentityState identity=PDArchiveInspectIdentity(url,&source);
+    if(identity==PDArchiveIdentityStateInvalid) {
+        PDV2Fail(error,17,@"ZIP 清单无效或不可读取，已拒绝导入");
+        return nil;
+    }
+    if(identity!=PDArchiveIdentityStateMatch && !userApprovedException) {
+        NSString *message=identity==PDArchiveIdentityStateDifferentApp ?
+            [NSString stringWithFormat:@"备份来源 %@ 与当前应用不一致，需要先明确确认才能导入",source] :
+            @"旧版备份没有可核对的应用身份，需要先明确确认才能导入";
+        PDV2Fail(error,18,message);
+        return nil;
+    }
     BOOL access=[url startAccessingSecurityScopedResource];
     mz_zip_archive zip={0};
     if(!mz_zip_reader_init_file(&zip,url.fileSystemRepresentation,0)) {
