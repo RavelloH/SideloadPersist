@@ -1,4 +1,5 @@
 #import "PDRedirect.h"
+#import "PDDiagnostics.h"
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -50,6 +51,15 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     if (s_bootstrapped) return;
     s_bootstrapped = YES;
     PDInstallHooks();
+    PDLog(@"Dylib startup; bundle=%@ system=%@",NSBundle.mainBundle.bundleIdentifier ?: @"unknown",UIDevice.currentDevice.systemVersion);
+    for (NSNotificationName name in @[UIApplicationDidBecomeActiveNotification,
+                                       UISceneDidActivateNotification,
+                                       UIWindowDidBecomeKeyNotification]) {
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(tryShowGate)
+                                            name:name object:nil];
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [self tryShowGate]; });
     NSData *saved = [[NSUserDefaults standardUserDefaults] dataForKey:kBookmarkKey];
     if (saved.length) {
         NSError *err = nil;
@@ -58,26 +68,18 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
                                                options:0 relativeToURL:nil
                                      bookmarkDataIsStale:&stale error:&err];
         if (url && [self activateFolder:url persist:stale error:&err]) {
-            NSLog(@"[SideloadPersist] Restored external Documents folder.");
+            PDLog(@"Restored external Documents folder.");
+            [self tryShowGate];
             return;
         }
-        NSLog(@"[SideloadPersist] Bookmark access failed, reauthorization required: %@",err);
+        PDLog(@"Bookmark access failed, reauthorization required: %@",err);
         [[NSUserDefaults standardUserDefaults] removeObjectForKey:kBookmarkKey];
     }
-    for (NSNotificationName name in @[UIApplicationDidBecomeActiveNotification,
-                                       UISceneDidActivateNotification,
-                                       UIWindowDidBecomeKeyNotification]) {
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(tryShowGate)
-                                            name:name object:nil];
-    }
     [self tryShowGate];
-    // The injected constructor may execute before a UIWindowScene is ready.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [self tryShowGate]; });
 }
 
 - (BOOL)activateFolder:(NSURL *)url persist:(BOOL)persist error:(NSError **)error {
-    NSLog(@"[SideloadPersist] Validating selected directory, url=%@", url);
+    PDLog(@"Validating selected directory, url=%@", url);
     if (PDIsInsideOwnSandbox(url)) {
         if (error) *error = [NSError errorWithDomain:@"SideloadPersist" code:4
             userInfo:@{NSLocalizedDescriptionKey:@"不能选择应用自身的目录，请返回位置列表，选择 iCloud Drive 或其他独立存储位置中的文件夹。"}];
@@ -87,7 +89,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         if(error) *error=[NSError errorWithDomain:@"SideloadPersist" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Please choose a local/file-provider folder."}];
         return NO;
     }
-    NSLog(@"[SideloadPersist] Requesting security-scoped access");
+    PDLog(@"Requesting security-scoped access");
     if (![url startAccessingSecurityScopedResource]) {
         if(error) *error=[NSError errorWithDomain:@"SideloadPersist" code:2 userInfo:@{NSLocalizedDescriptionKey:@"Folder security scope denied."}];
         return NO;
@@ -95,10 +97,10 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     __block NSError *fileError = nil;
     NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
     NSError *coordError = nil;
-    NSLog(@"[SideloadPersist] Beginning file coordination");
+    PDLog(@"Beginning file coordination");
     [coordinator coordinateWritingItemAtURL:url options:NSFileCoordinatorWritingForMerging
                                      error:&coordError byAccessor:^(NSURL *newURL) {
-        NSLog(@"[SideloadPersist] File coordinator acquired URL=%@",newURL);
+        PDLog(@"File coordinator acquired URL=%@",newURL);
         NSURL *docs = [newURL URLByAppendingPathComponent:@"Documents" isDirectory:YES];
         if (![[NSFileManager defaultManager] createDirectoryAtURL:docs
                                      withIntermediateDirectories:YES attributes:nil error:&fileError]) return;
@@ -108,7 +110,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         if (![data writeToURL:probe options:NSDataWritingAtomic error:&fileError]) return;
         [[NSFileManager defaultManager] removeItemAtURL:probe error:nil];
     }];
-    NSLog(@"[SideloadPersist] File coordination completed: file=%@ coord=%@",fileError,coordError);
+    PDLog(@"File coordination completed: file=%@ coord=%@",fileError,coordError);
     NSError *failure = fileError ?: coordError;
     if (failure) {
         [url stopAccessingSecurityScopedResource];
@@ -117,7 +119,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     }
     // Persist the ORIGINAL selected security-scoped URL, not a bare URL path.
     if (persist) {
-        NSLog(@"[SideloadPersist] Saving security-scoped bookmark");
+        PDLog(@"Saving security-scoped bookmark");
         NSError *bookmarkError = nil;
         NSData *bookmark = [url bookmarkDataWithOptions:0
                          includingResourceValuesForKeys:nil relativeToURL:nil error:&bookmarkError];
@@ -133,7 +135,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     s_accessStarted = YES;
     NSURL *docs = [url URLByAppendingPathComponent:@"Documents" isDirectory:YES];
     PDSetExternalDocumentsPath(docs.path);
-    NSLog(@"[SideloadPersist] Documents redirected to %@",docs.path);
+    PDLog(@"Documents redirected to %@",docs.path);
     return YES;
 }
 
@@ -142,7 +144,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self tryShowGate]; });
         return;
     }
-    if (PDIsRedirectActive() || s_gateController || s_choosing) return;
+    if (s_choosing) return;
     UIWindow *hostWindow = nil;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]] ||
@@ -156,15 +158,20 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         if (hostWindow) break;
     }
     if (!hostWindow) return;
+    if (PDIsRedirectActive()) {
+        PDInstallDiagnosticsButton(hostWindow);
+        return;
+    }
+    if (s_gateController) return;
     UIViewController *host = hostWindow.rootViewController;
     while (host.presentedViewController) host = host.presentedViewController;
     if (host.isBeingDismissed || host.isBeingPresented || !host.view.window) return;
     PDGateController *gate = [[PDGateController alloc] init];
     gate.modalPresentationStyle = UIModalPresentationFullScreen;
     s_gateController = gate;
-    NSLog(@"[SideloadPersist] Presenting full-screen gate in host window: %@", hostWindow);
+    PDLog(@"Presenting full-screen gate in host window: %@", hostWindow);
     [host presentViewController:gate animated:NO completion:^{
-        NSLog(@"[SideloadPersist] Gate ready. Awaiting folder selection.");
+        PDLog(@"Gate ready. Awaiting folder selection.");
     }];
 }
 
@@ -173,10 +180,11 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self closeGate]; });
         return;
     }
-    NSLog(@"[SideloadPersist] Folder activated; dismissing gate.");
-    [s_gateController dismissViewControllerAnimated:NO completion:nil];
+    PDLog(@"Folder activated; dismissing gate.");
+    [s_gateController dismissViewControllerAnimated:NO completion:^{
+        [self tryShowGate];
+    }];
     s_gateController = nil;
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 @end
 
@@ -205,7 +213,11 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     [button setTitle:@"选择文件夹" forState:UIControlStateNormal];
     button.titleLabel.font=[UIFont boldSystemFontOfSize:18];
     [button addTarget:self action:@selector(chooseFolder) forControlEvents:UIControlEventTouchUpInside];
-    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,button,self.statusLabel]];
+    UIButton *diagnostics=[UIButton buttonWithType:UIButtonTypeSystem];
+    [diagnostics setTitle:@"查看诊断日志" forState:UIControlStateNormal];
+    diagnostics.titleLabel.font=[UIFont systemFontOfSize:15];
+    [diagnostics addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,button,diagnostics,self.statusLabel]];
     stack.axis=UILayoutConstraintAxisVertical;
     stack.spacing=24;
     stack.alignment=UIStackViewAlignmentFill;
@@ -217,9 +229,12 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         [stack.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-24]
     ]];
 }
+- (void)showDiagnostics {
+    PDPresentDiagnostics(self);
+}
 - (void)chooseFolder {
     if (s_choosing || s_validating) return;
-    NSLog(@"[SideloadPersist] Opening directory picker");
+    PDLog(@"Opening directory picker");
     s_choosing = YES;
     UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
         initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
@@ -227,16 +242,16 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     picker.allowsMultipleSelection=NO;
     picker.modalPresentationStyle=UIModalPresentationFullScreen;
     [self presentViewController:picker animated:YES completion:^{
-        NSLog(@"[SideloadPersist] Directory picker presented");
+        PDLog(@"Directory picker presented");
     }];
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    NSLog(@"[SideloadPersist] Directory picker cancelled");
+    PDLog(@"Directory picker cancelled");
     s_choosing=NO;
     self.statusLabel.text=@"尚未选择文件夹，应用将保持在此页面。";
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    NSLog(@"[SideloadPersist] Picker returned %lu URL(s)",(unsigned long)urls.count);
+    PDLog(@"Picker returned %lu URL(s)",(unsigned long)urls.count);
     if (!s_choosing || s_validating) return; // tolerate duplicate legacy delegate callbacks
     s_choosing=NO;
     s_validating=YES;
@@ -259,7 +274,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
             if (!strongSelf) return;
             if (ok) [[PDGateManager shared] closeGate];
             else {
-                NSLog(@"[SideloadPersist] Folder activation failed: %@",error);
+                PDLog(@"Folder activation failed: %@",error);
                 strongSelf.chooseButton.enabled=YES;
                 strongSelf.statusLabel.text=[NSString stringWithFormat:@"访问失败：%@。请换一个文件夹。",error.localizedDescription ?: @"未知错误"];
             }
@@ -268,7 +283,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
 }
 // Compatibility fallback for providers which use the single-URL delegate.
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentAtURL:(NSURL *)url {
-    NSLog(@"[SideloadPersist] Picker legacy single URL delegate invoked");
+    PDLog(@"Picker legacy single URL delegate invoked");
     [self documentPicker:controller didPickDocumentsAtURLs:url ? @[url] : @[]];
 }
 @end
