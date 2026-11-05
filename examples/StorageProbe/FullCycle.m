@@ -264,19 +264,29 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSArray<NSString *> *entries=[NSFileManager.defaultManager contentsOfDirectoryAtPath:library error:nil];
     NSSet *mapped=[NSSet setWithArray:@[@"Application Support",@"WebKit",@"Cookies",@"Preferences"]];
     NSSet *transient=[NSSet setWithArray:@[@"Caches",@"Saved Application State"]];
+    NSMutableSet<NSString *> *custom=[NSMutableSet set];
+    NSDictionary *currentManifest=SPJSON([self.root stringByAppendingPathComponent:@"manifest.json"]);
+    for(NSDictionary *entry in currentManifest[@"additionalLibraryMappings"]) {
+        NSString *source=entry[@"source"];
+        if([source hasPrefix:@"Library/"] && [source componentsSeparatedByString:@"/"].count==2)
+            [custom addObject:source.lastPathComponent];
+    }
     for(NSString *name in [entries sortedArrayUsingSelector:@selector(compare:)]) {
         NSString *path=[library stringByAppendingPathComponent:name];
         BOOL isDir=NO;
         if(![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDir] || !isDir) continue;
         NSString *classification=[mapped containsObject:name] ? @"mapped" :
-            ([transient containsObject:name] ? @"transient" : @"unmapped-needs-research");
+            ([custom containsObject:name] ? @"app-owned-mapped" :
+             ([transient containsObject:name] ? @"transient" :
+              ([name isEqualToString:@"SplashBoard"] ? @"system-managed-excluded" :
+               @"unmapped-needs-research")));
         [self line:[NSString stringWithFormat:@"LIBRARY_DISCOVERY %@ category=%@",name,classification]];
     }
     // A synthetic custom Library directory identifies an important scope
     // not covered by the four static mappings. It is a diagnostic, not a FAIL.
-    NSString *custom=[library stringByAppendingPathComponent:@"StorageProbeCustomPersistent"];
-    [NSFileManager.defaultManager createDirectoryAtPath:custom withIntermediateDirectories:YES attributes:nil error:nil];
-    NSString *marker=[custom stringByAppendingPathComponent:@"marker.txt"];
+    NSString *probeCustom=[library stringByAppendingPathComponent:@"StorageProbeCustomPersistent"];
+    [NSFileManager.defaultManager createDirectoryAtPath:probeCustom withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *marker=[probeCustom stringByAppendingPathComponent:@"marker.txt"];
     NSString *old=[NSString stringWithContentsOfFile:marker encoding:NSUTF8StringEncoding error:nil];
     NSString *value=old ?: NSUUID.UUID.UUIDString;
     BOOL wrote=[value writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
@@ -289,7 +299,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSString *backup=[NSHomeDirectory() stringByAppendingPathComponent:
         @"Documents/SideloadPersist/Data/Application Support/SideloadPersist.Library/StorageProbeCustomPersistent"];
     char linkDestination[4096]={0};
-    ssize_t length=readlink(custom.fileSystemRepresentation,linkDestination,sizeof(linkDestination)-1);
+    ssize_t length=readlink(probeCustom.fileSystemRepresentation,linkDestination,sizeof(linkDestination)-1);
     BOOL customMapped=length>0 && [backup isEqualToString:[NSString stringWithUTF8String:linkDestination]];
     [self check:customMapped label:@"APP_PRIVATE_LIBRARY StorageProbeCustomPersistent mapped to existing AppSupport backup"];
     NSDictionary *manifest=SPJSON([self.root stringByAppendingPathComponent:@"manifest.json"]);
