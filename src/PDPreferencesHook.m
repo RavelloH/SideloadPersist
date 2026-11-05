@@ -53,12 +53,21 @@ static id PDNewSuite(id self,SEL selector,NSString *suite) {
 static id PDObject(id self,SEL selector,NSString *key) {
     NSString *domain=PDDomainForDefaults(self);
     if(!domain.length || !key.length) return originalObject(self,selector,key);
+    // NSArgumentDomain has higher precedence than the application's own domain.
+    id argument=[[self volatileDomainForName:NSArgumentDomain] objectForKey:key];
+    if(argument) return argument;
     BOOL present=NO,removed=NO;
     id value=PDPreferencesValue(domain,key,&present,&removed);
     if(present) return value;
-    if(removed) return nil;
-    // Preserve system global defaults, registration defaults and legacy
-    // domain reads for keys that have never been written to the live store.
+    if(removed) {
+        // Removing an app-domain key must still expose global/registration
+        // defaults, but never resurrect the stale original app-domain plist.
+        id global=[[self persistentDomainForName:NSGlobalDomain] objectForKey:key];
+        if(global) return global;
+        return [[self volatileDomainForName:NSRegistrationDomain] objectForKey:key];
+    }
+    // Preserve other system search domains for keys that this managed domain
+    // never explicitly wrote or removed.
     return originalObject(self,selector,key);
 }
 static void PDSet(id self,SEL selector,id value,NSString *key) {
@@ -116,8 +125,14 @@ static NSDictionary *PDDictionaryRepresentation(id self,SEL selector) {
     NSString *domain=PDDomainForDefaults(self);
     if(!domain.length) return original;
     NSMutableDictionary *result=[original mutableCopy] ?: [NSMutableDictionary dictionary];
-    for(NSString *key in PDPreferencesRemovedKeys(domain)) [result removeObjectForKey:key];
+    for(NSString *key in PDPreferencesRemovedKeys(domain)) {
+        [result removeObjectForKey:key];
+        id fallback=PDObject(self,@selector(objectForKey:),key);
+        if(fallback) result[key]=fallback;
+    }
     [result addEntriesFromDictionary:PDPreferencesValues(domain)];
+    // Argument values override application defaults, including live values.
+    [result addEntriesFromDictionary:[self volatileDomainForName:NSArgumentDomain] ?: @{}];
     return result;
 }
 // Explicit typed methods: Foundation implementations need not delegate to
