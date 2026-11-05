@@ -1,4 +1,5 @@
 #import "PDIntro.h"
+#import "PDGuide.h"
 #import "PDStorage.h"
 #import "PDArchive.h"
 #import <UIKit/UIKit.h>
@@ -255,61 +256,9 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
 }
 - (void)showGuide {
-    UIViewController *guide=[UIViewController new];
-    guide.view.backgroundColor=UIColor.systemBackgroundColor;
-    UILabel *title=PDLabel(@"数据如何保留与恢复",28,UIFontWeightBold,UIColor.labelColor);
-    UILabel *lead=PDLabel(@"只需一次备份，便可以在更换签名后继续使用已保存的数据。",15,UIFontWeightRegular,UIColor.secondaryLabelColor);
-    NSMutableArray *views=[NSMutableArray arrayWithObjects:title,lead,nil];
-    NSString *appName=NSBundle.mainBundle.infoDictionary[@"CFBundleDisplayName"] ?:
-                      NSBundle.mainBundle.infoDictionary[@"CFBundleName"] ?: @"当前 App";
-    NSString *appFolder=[NSString stringWithFormat:@"在我的 iPhone › %@",appName];
-    NSArray *heads=@[@"正常使用",@"签名过期时",@"重新安装",@"恢复备份",@"大功告成！",@"更多可能…"];
-    NSArray *details=@[
-        @"无需任何操作，插件会自动将应用中受支持的私有数据转移到可访问的持久化目录。",
-        [NSString stringWithFormat:@"先不要卸载 App。打开「文件」App，前往「%@」，压缩「SideloadPersist」文件夹，再将 ZIP 转存到这个 App 文件夹之外的安全位置。",appFolder],
-        [NSString stringWithFormat:@"现在可以删除并重新安装 App。删除前，请确认刚保存的 ZIP 确实位于「%@」文件夹之外，例如 iCloud Drive。",appFolder],
-        @"打开 App，选择「导入备份 ZIP」，待校验完成后按提示退出，再手动打开 App 完成恢复。",
-        @"您备份的应用数据已完成迁移——妥善保存备份，以后不必再担心签名过期导致这些数据丢失。",
-        @"在 App 关闭的情况下，您可以通过「SideloadPersist」直接读写已经迁出的应用私有数据，无需越狱。更多的可能性等您来发现！"];
-    for(NSUInteger i=0;i<heads.count;i++){
-        UILabel *number=PDLabel([NSString stringWithFormat:@"%lu", (unsigned long)(i+1)],54,UIFontWeightBold,[PDAccent() colorWithAlphaComponent:0.55]);
-        [number.widthAnchor constraintEqualToConstant:60].active=YES;
-        UILabel *header=PDLabel(heads[i],19,UIFontWeightSemibold,UIColor.labelColor);
-        UILabel *detail=PDLabel(details[i],14,UIFontWeightRegular,UIColor.secondaryLabelColor);
-        UIStackView *text=[[UIStackView alloc] initWithArrangedSubviews:@[header,detail]];
-        text.axis=UILayoutConstraintAxisVertical; text.spacing=4;
-        UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[number,text]];
-        row.axis=UILayoutConstraintAxisHorizontal; row.alignment=UIStackViewAlignmentTop;
-        row.spacing=12;
-        [views addObject:row];
-    }
-    UILabel *footnote=PDLabel(@"目前仅自动重定位 Application Support 等已支持的数据；Preferences、Keychain、WebKit 等仍在研究中。删除 App 前务必确认备份已放在 App 目录外。",12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
-    [views addObject:footnote];
-    UIButton *finish=PDButton(@"返回",YES);
-    [finish addTarget:self action:@selector(closeGuide) forControlEvents:UIControlEventTouchUpInside];
-    [views addObject:finish];
-    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:views];
-    stack.axis=UILayoutConstraintAxisVertical; stack.spacing=26;
-    stack.translatesAutoresizingMaskIntoConstraints=NO;
-    UIScrollView *scroll=[UIScrollView new];scroll.translatesAutoresizingMaskIntoConstraints=NO;
-    [guide.view addSubview:scroll];[scroll addSubview:stack];
-    UILayoutGuide *safe=guide.view.safeAreaLayoutGuide;
-    [NSLayoutConstraint activateConstraints:@[
-        [scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],
-        [scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
-        [scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
-        [scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:44],
-        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-28],
-        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:28],
-        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-28],
-        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-56]
-    ]];
+    PDGuideController *guide=[PDGuideController new];
     guide.modalPresentationStyle=UIModalPresentationFullScreen;
     [self presentViewController:guide animated:YES completion:nil];
-}
-- (void)closeGuide {
-    [self.presentedViewController dismissViewControllerAnimated:YES completion:nil];
 }
 - (void)chooseImport {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"导入备份"
