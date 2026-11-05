@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
             -framework Foundation -Isrc -Ivendor/miniz \
-            tests/StorageSmoke.m src/PDStorage.m src/PDExperimentalScope.m src/PDArchive.m \
+            tests/StorageSmoke.m src/PDStorage.m src/PDExperimentalScope.m src/PDArchive.m src/PDV2Archive.m src/PDV2Restore.m \
             vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
             -o /tmp/pd-storage-smoke
           TEST_HOME="$(mktemp -d)"
@@ -48,6 +48,26 @@ jobs:
           HOME="$BARE_HOME" /tmp/pd-storage-smoke apply-bare
           EXPERIMENT_HOME="$(mktemp -d)"
           HOME="$EXPERIMENT_HOME" /tmp/pd-storage-smoke experiment
+      - name: Test V2 multi-scope archive, cold restart, crash replay and rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
+            -framework Foundation -Isrc -Ivendor/miniz \
+            tests/StorageV2Smoke.m src/PDStorage.m src/PDExperimentalScope.m \
+            src/PDArchive.m src/PDV2Archive.m src/PDV2Restore.m \
+            vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
+            -o /tmp/pd-v2-storage-smoke
+          MULTI_HOME="$(mktemp -d)"
+          HOME="$MULTI_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke prepare
+          HOME="$MULTI_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke apply
+          REPLAY_HOME="$(mktemp -d)"
+          HOME="$REPLAY_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke prepare-interruption
+          HOME="$REPLAY_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke apply
+          ROLLBACK_HOME="$(mktemp -d)"
+          HOME="$ROLLBACK_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke prepare-rollback
+          HOME="$ROLLBACK_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 PD_V2_SMOKE_FAIL_SCOPE=WebKit /tmp/pd-v2-storage-smoke apply-rollback
+          HOME="$ROLLBACK_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke apply
       - name: Build independent unsigned PickerProbe IPA
         shell: bash
         run: |

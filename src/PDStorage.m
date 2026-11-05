@@ -1,5 +1,6 @@
 #import "PDStorage.h"
 #import "PDExperimentalScope.h"
+#import "PDV2Restore.h"
 #import <sys/stat.h>
 #import <unistd.h>
 #import <errno.h>
@@ -101,8 +102,11 @@ static BOOL PDApplyPendingRestore(void) {
         return YES;
     }
     NSString *root=PDStorageRoot();
-    NSString *incoming=[[[root stringByAppendingPathComponent:@"Incoming"] stringByAppendingPathComponent:identifier]
-                         stringByAppendingPathComponent:@"Application Support"];
+    NSString *stageRoot=[[root stringByAppendingPathComponent:@"Incoming"] stringByAppendingPathComponent:identifier];
+    NSString *v2Plan=[stageRoot stringByAppendingPathComponent:@"restore-plan.json"];
+    if([NSFileManager.defaultManager fileExistsAtPath:v2Plan])
+        return PDV2ApplyPendingRestore(identifier);
+    NSString *incoming=[stageRoot stringByAppendingPathComponent:@"Application Support"];
     NSString *backup=[[root stringByAppendingPathComponent:@"Backups"] stringByAppendingPathComponent:identifier];
     NSString *target=PDStorageTarget();
     struct stat st={0};

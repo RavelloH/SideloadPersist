@@ -1,5 +1,6 @@
 #import "PDArchive.h"
 #import "PDStorage.h"
+#import "PDV2Archive.h"
 #import "miniz.h"
 #import <sys/stat.h>
 
@@ -85,6 +86,9 @@ NSString *PDArchiveStageZIP(NSURL *zipURL, NSError **error) {
         PDImportError(error,2,@"已有等待恢复的数据包，请先完全退出并重新启动 App");
         return nil;
     }
+    // Never silently drop WebKit/Cookies from a user archive. Either stage
+    // every supported scope through the v2 path, or reject the whole import.
+    if (PDV2ZIPHasExtraScopes(zipURL)) return PDV2StageZIP(zipURL,error);
     BOOL access=[zipURL startAccessingSecurityScopedResource];
     mz_zip_archive zip={0};
     if (!mz_zip_reader_init_file(&zip,zipURL.fileSystemRepresentation,0)) {
