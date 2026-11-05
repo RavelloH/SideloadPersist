@@ -153,6 +153,7 @@ PDStorageState PDStorageBootstrap(void) {
         NSString *target = PDStorageTarget();
         NSString *root = PDStorageRoot();
         if (!PDCreateDir(PDStorageDocuments()) ||
+            !PDCreateDir([source stringByDeletingLastPathComponent]) ||
             !PDCreateDir(root) ||
             !PDCreateDir([target stringByDeletingLastPathComponent]) ||
             !PDCreateDir(PDStorageInbox())) {
