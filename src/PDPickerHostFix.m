@@ -1,6 +1,7 @@
 #import "PDPickerHostFix.h"
 #import <objc/runtime.h>
 #import <Security/Security.h>
+#import <dlfcn.h>
 #import <stdatomic.h>
 #import <stdarg.h>
 
@@ -24,13 +25,22 @@ NSString *PDPickerHostFixActualBundleID(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         CFErrorRef error = NULL;
-        SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+        // SecTask symbols are private on iOS and absent from the public SDK headers.
+        // Resolve dynamically so unsupported OS versions fail closed, not at load time.
+        CFTypeRef (*createSelf)(CFAllocatorRef) =
+            (CFTypeRef (*)(CFAllocatorRef))dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf");
+        CFTypeRef (*readEntitlement)(CFTypeRef, CFStringRef, CFErrorRef *) =
+            (CFTypeRef (*)(CFTypeRef, CFStringRef, CFErrorRef *))dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement");
+        if (!createSelf || !readEntitlement) {
+            PDHostMessage(@"SecTask entitlement APIs unavailable; host fix will be a no-op");
+            return;
+        }
+        CFTypeRef task = createSelf(kCFAllocatorDefault);
         if (!task) {
             PDHostMessage(@"Unable to create SecTask from current process");
             return;
         }
-        CFTypeRef value = SecTaskCopyValueForEntitlement(
-            task, CFSTR("application-identifier"), &error);
+        CFTypeRef value = readEntitlement(task, CFSTR("application-identifier"), &error);
         CFRelease(task);
         if (value) {
             if (CFGetTypeID(value) == CFStringGetTypeID()) {
