@@ -94,6 +94,26 @@ BOOL PDV2ZIPHasUnsupportedScopes(NSURL *url) {
     if(access) [url stopAccessingSecurityScopedResource];
     return found;
 }
+BOOL PDV2ZIPHasIntegrityWarning(NSURL *url) {
+    if(!url.isFileURL) return NO;
+    BOOL access=[url startAccessingSecurityScopedResource];
+    mz_zip_archive zip={0};
+    BOOL found=NO;
+    if(mz_zip_reader_init_file(&zip,url.fileSystemRepresentation,0)) {
+        for(mz_uint i=0;i<mz_zip_reader_get_num_files(&zip);i++) {
+            NSString *name=PDV2SafePath(PDV2Name(&zip,i));
+            if([name isEqualToString:@"preferences-integrity-warning.json"] ||
+               [name isEqualToString:@"SideloadPersist/preferences-integrity-warning.json"] ||
+               [name hasSuffix:@"/SideloadPersist/preferences-integrity-warning.json"]) {
+                found=YES;break;
+            }
+        }
+    }
+    mz_zip_reader_end(&zip);
+    if(access) [url stopAccessingSecurityScopedResource];
+    return found;
+}
+
 BOOL PDV2ZIPHasExtraScopes(NSURL *url) {
     if(!url.isFileURL) return NO;
     BOOL access=[url startAccessingSecurityScopedResource];
