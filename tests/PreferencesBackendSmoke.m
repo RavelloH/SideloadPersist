@@ -45,7 +45,29 @@ int main(int argc,char **argv) {
             verify(!PDPreferencesValues(suite)[@"count"],@"suite domain erased");
             NSLog(@"Backend verified: %@",PDPreferencesHealth());
         } else if(strcmp(argv[1],"hooks")==0) {
+            NSString *nativeDomain=@"com.apple.Accessibility";
+            NSString *pathDomain=@"/var/mobile/Library/Preferences/com.apple.Accessibility";
+            verify(PDPreferencesShouldManageDomain(domain),@"bundle domain allowed");
+            verify(PDPreferencesShouldManageDomain(@"com.ravelloh.preferences.hook.suite"),@"app suite allowed");
+            verify(!PDPreferencesShouldManageDomain(nativeDomain),@"system framework domain excluded");
+            verify(!PDPreferencesShouldManageDomain(pathDomain),@"absolute-path domain excluded");
+            verify(!PDPreferencesShouldManageDomain(@"group.example.shared"),@"App Group suite excluded");
+            NSError *legacyError=nil;
+            verify(PDPreferencesEnsureDomain(nativeDomain,@{@"dummy":@"not real OS data"},&legacyError),
+                @"create simulated legacy system suite");
+            verify(PDPreferencesEnsureDomain(pathDomain,@{@"dummy":@"not real OS data"},&legacyError),
+                @"create simulated legacy path suite");
             verify(PDPreferencesInstallHook(),@"Foundation preferences hook installed");
+            verify(!PDPreferencesDomainExists(nativeDomain) && !PDPreferencesDomainExists(pathDomain),
+                @"legacy system preference domain copies moved outside exported Data");
+            NSString *home=[NSString stringWithUTF8String:getenv("HOME") ?: "/tmp"];
+            NSString *excluded=[home stringByAppendingPathComponent:
+                @"Library/Caches/SideloadPersist/ExcludedPreferences"];
+            NSArray *batches=[NSFileManager.defaultManager contentsOfDirectoryAtPath:excluded error:nil];
+            verify(batches.count==1,@"one non-destructive quarantine batch");
+            NSString *batch=[excluded stringByAppendingPathComponent:batches.firstObject];
+            NSArray *files=[NSFileManager.defaultManager contentsOfDirectoryAtPath:batch error:nil];
+            verify(files.count==2,@"both system-domain mock files preserved outside ZIP");
             NSUserDefaults *prefs=NSUserDefaults.standardUserDefaults;
             [prefs setInteger:8 forKey:@"StorageProbe.HookCounter"];
             verify([prefs integerForKey:@"StorageProbe.HookCounter"]==8,@"NSUserDefaults typed integer read/write");
@@ -56,6 +78,9 @@ int main(int argc,char **argv) {
             NSUserDefaults *another=[[NSUserDefaults alloc] initWithSuiteName:@"com.ravelloh.preferences.hook.suite"];
             [another setInteger:22 forKey:@"StorageProbe.SuiteCounter"];
             verify([another integerForKey:@"StorageProbe.SuiteCounter"]==22,@"NSUserDefaults suite separation");
+            NSUserDefaults *systemSuite=[[NSUserDefaults alloc] initWithSuiteName:nativeDomain];
+            verify(systemSuite!=nil,@"native system suite remains available");
+            verify(!PDPreferencesDomainExists(nativeDomain),@"opening native system suite does not recreate export");
             verify(![prefs objectForKey:@"StorageProbe.SuiteCounter"],@"standard app domain not contaminated by suite");
             [prefs removeObjectForKey:@"StorageProbe.HookBoolean"];
             verify(![prefs boolForKey:@"StorageProbe.HookBoolean"],@"NSUserDefaults remove masked");
