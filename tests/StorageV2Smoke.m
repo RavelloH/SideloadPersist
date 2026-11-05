@@ -44,7 +44,7 @@ static void archiveWithIdentity(NSString *p,BOOL withPrefs,BOOL missingCookie,
     mz_zip_archive zip={0};
     check(mz_zip_writer_init_file(&zip,p.fileSystemRepresentation,0),@"ZIP initialize");
     NSString *identity=[sourceBundle isEqualToString:@"__legacy__"] ? @"" :
-        [NSString stringWithFormat:@",\"originalBundleID\":\"%@\"",sourceBundle ?: appID()];
+        [NSString stringWithFormat:@",\"originalBundleID\":\"%@\"",([sourceBundle isEqualToString:@"__warning__"] ? appID() : sourceBundle ?: appID())];
     NSString *manifest=[NSString stringWithFormat:withPrefs?
         @"{\"format\":\"SideloadPersist.Directory.V3\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\",\"Preferences\"]%@}":
         @"{\"format\":\"SideloadPersist.Directory.V2\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\"]%@}",identity];
@@ -97,6 +97,11 @@ static void archiveWithIdentity(NSString *p,BOOL withPrefs,BOOL missingCookie,
                           value.bytes,value.length,MZ_BEST_SPEED),
               @"ZIP carries app-owned Library directory inside Application Support");
     }
+    if([sourceBundle isEqualToString:@"__warning__"]) {
+        const char *warning="{\"format\":\"SideloadPersist.IntegrityWarning.V1\",\"backupSafe\":false}";
+        check(mz_zip_writer_add_mem(&zip,"SideloadPersist/preferences-integrity-warning.json",
+            warning,strlen(warning),MZ_BEST_SPEED),@"ZIP contains simulated preference write-failure marker");
+    }
     check(mz_zip_writer_finalize_archive(&zip),@"ZIP finalize");
     mz_zip_writer_end(&zip);
 }
@@ -126,22 +131,29 @@ int main(int argc,char **argv){
     NSString *pending=[root() stringByAppendingPathComponent:@"restore-pending.txt"];
     NSFileManager *fm=NSFileManager.defaultManager;
     if([mode isEqualToString:@"identity-mismatch"] ||
-       [mode isEqualToString:@"identity-legacy"]) {
+       [mode isEqualToString:@"identity-legacy"] ||
+       [mode isEqualToString:@"identity-warning"]) {
         check(PDStorageBootstrap()==PDStorageStateRecovered,@"identity test initializes storage");
         NSString *zip=[home() stringByAppendingPathComponent:@"identity-test.zip"];
         BOOL legacy=[mode isEqualToString:@"identity-legacy"];
-        archiveWithIdentity(zip,NO,NO,legacy?@"__legacy__":@"org.other.vendor");
+        BOOL warning=[mode isEqualToString:@"identity-warning"];
+        archiveWithIdentity(zip,NO,NO,warning?@"__warning__":(legacy?@"__legacy__":@"org.other.vendor"));
         NSString *seen=nil;
         PDArchiveIdentityState state=PDArchiveInspectIdentity([NSURL fileURLWithPath:zip],&seen);
-        check(state==(legacy?PDArchiveIdentityStateLegacyUnknown:
-                     PDArchiveIdentityStateDifferentApp),@"backup identity preflight recognized mismatch");
+        check(state==(warning?PDArchiveIdentityStateMatch:(legacy?
+              PDArchiveIdentityStateLegacyUnknown:PDArchiveIdentityStateDifferentApp)),
+              @"backup identity preflight classified archive");
         NSError *error=nil;
         check(!PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error),
-              @"unverified identity rejected by default");
+              warning?@"integrity marker always prevents restore":@"unverified identity rejected by default");
         check(![fm fileExistsAtPath:pending],@"identity refusal does not stage restore");
         error=nil;
-        check(PDArchiveStageZIPWithIdentityApproval([NSURL fileURLWithPath:zip],YES,&error).length==36,
-              @"explicit identity approval permits compatible archive");
+        if(warning)
+            check(!PDArchiveStageZIPWithIdentityApproval([NSURL fileURLWithPath:zip],YES,&error),
+                  @"identity override never bypasses integrity failure");
+        else
+            check(PDArchiveStageZIPWithIdentityApproval([NSURL fileURLWithPath:zip],YES,&error).length==36,
+                  @"explicit identity approval permits compatible archive");
     } else if([mode isEqualToString:@"prepare-private-conflict"]) {
         NSString *original=[lib(appID()) stringByAppendingPathComponent:@"marker.txt"];
         NSString *nested=[[[data(@"Application Support")
