@@ -26,10 +26,33 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -framework Foundation -Isrc tests/PathSmoke.m src/PDRedirect.m -o /tmp/pd-path-smoke
           /tmp/pd-path-smoke
-      - name: Upload build artifact
+      - name: Build independent unsigned PickerProbe IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          mkdir -p dist/probe-stage/Payload/PickerProbe.app
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
+            -miphoneos-version-min=15.0 -fobjc-arc -fmodules -O2 -Wall -Wextra \
+            -Wno-unused-parameter -framework UIKit -framework Foundation \
+            -framework UniformTypeIdentifiers examples/PickerProbe/main.m \
+            -o dist/probe-stage/Payload/PickerProbe.app/PickerProbe
+          cp examples/PickerProbe/Info.plist dist/probe-stage/Payload/PickerProbe.app/Info.plist
+          plutil -lint dist/probe-stage/Payload/PickerProbe.app/Info.plist
+          (cd dist/probe-stage && ditto -c -k --keepParent Payload ../PickerProbe-unsigned.ipa)
+          file dist/PickerProbe-unsigned.ipa
+          unzip -l dist/PickerProbe-unsigned.ipa
+      - name: Upload dylib
         uses: actions/upload-artifact@v4
         with:
           name: SideloadPersist-ios-arm64-unsigned
           path: dist/SideloadPersist.dylib
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload independent test IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PickerProbe-unsigned-ipa
+          path: dist/PickerProbe-unsigned.ipa
           if-no-files-found: error
           retention-days: 14

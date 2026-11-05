@@ -14,6 +14,7 @@ static BOOL s_accessStarted = NO;
 static BOOL s_bootstrapped = NO;
 static BOOL s_choosing = NO;
 static BOOL s_validating = NO;
+static BOOL s_fileProbe = NO;
 
 static NSString *PDNormalizeContainerPath(NSString *p) {
     if ([p hasPrefix:@"/private/var/"]) return [p substringFromIndex:8];
@@ -30,6 +31,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
 @property(nonatomic,strong) UILabel *statusLabel;
 @property(nonatomic,strong) UIButton *chooseButton;
 @property(nonatomic,strong) UIButton *compatibilityButton;
+@property(nonatomic,strong) UIButton *fileProbeButton;
 @end
 
 @interface PDGateManager : NSObject
@@ -51,8 +53,9 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
 - (void)bootstrap {
     if (s_bootstrapped) return;
     s_bootstrapped = YES;
-    PDInstallHooks();
-    PDLog(@"Dylib startup; bundle=%@ system=%@",NSBundle.mainBundle.bundleIdentifier ?: @"unknown",UIDevice.currentDevice.systemVersion);
+    // Leave the document picker completely untouched by our filesystem hooks.
+    // Activate hooks only after a folder URL is accepted and verified.
+    PDLog(@"Dylib startup; bundle=%@ system=%@; filesystem hooks deferred until authorization",NSBundle.mainBundle.bundleIdentifier ?: @"unknown",UIDevice.currentDevice.systemVersion);
     for (NSNotificationName name in @[UIApplicationDidBecomeActiveNotification,
                                        UISceneDidActivateNotification,
                                        UIWindowDidBecomeKeyNotification]) {
@@ -136,7 +139,8 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     s_accessStarted = YES;
     NSURL *docs = [url URLByAppendingPathComponent:@"Documents" isDirectory:YES];
     PDSetExternalDocumentsPath(docs.path);
-    PDLog(@"Documents redirected to %@",docs.path);
+    PDInstallHooks();
+    PDLog(@"Filesystem hooks installed after authorization; Documents redirected to %@",docs.path);
     return YES;
 }
 
@@ -219,11 +223,16 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     alternate.titleLabel.font=[UIFont systemFontOfSize:15];
     [alternate addTarget:self action:@selector(chooseFolderCompatibility) forControlEvents:UIControlEventTouchUpInside];
     self.compatibilityButton = alternate;
+    UIButton *fileProbe = [UIButton buttonWithType:UIButtonTypeSystem];
+    [fileProbe setTitle:@"诊断：选择一个普通文件" forState:UIControlStateNormal];
+    fileProbe.titleLabel.font=[UIFont systemFontOfSize:15];
+    [fileProbe addTarget:self action:@selector(probeFileSelection) forControlEvents:UIControlEventTouchUpInside];
+    self.fileProbeButton = fileProbe;
     UIButton *diagnostics=[UIButton buttonWithType:UIButtonTypeSystem];
     [diagnostics setTitle:@"查看诊断日志" forState:UIControlStateNormal];
     diagnostics.titleLabel.font=[UIFont systemFontOfSize:15];
     [diagnostics addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
-    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,button,alternate,diagnostics,self.statusLabel]];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,button,alternate,fileProbe,diagnostics,self.statusLabel]];
     stack.axis=UILayoutConstraintAxisVertical;
     stack.spacing=24;
     stack.alignment=UIStackViewAlignmentFill;
@@ -244,8 +253,35 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
 - (void)chooseFolderCompatibility {
     [self openFolderPickerUsingCompatibilityMode:YES];
 }
+- (void)probeFileSelection {
+    if (s_choosing || s_validating) return;
+    // Diagnostic only: do NOT activate Documents redirection or touch file contents.
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeData, UTTypeContent]];
+    if (!picker) {
+        PDLog(@"File selection probe: picker initialization failed");
+        self.statusLabel.text = @"普通文件测试无法打开选择器。";
+        return;
+    }
+    s_choosing = YES;
+    s_fileProbe = YES;
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    PDLog(@"File selection probe started; filesystem hooks are deferred");
+    self.statusLabel.text = @"请选择一个已有的 PDF、TXT、JSON 或图片文件。此测试不会修改它。";
+    [self presentViewController:picker animated:YES completion:^{
+        PDLog(@"File selection probe picker presented");
+    }];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(15*NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (weakSelf && s_choosing && s_fileProbe && weakSelf.presentedViewController == picker)
+            PDLog(@"File selection probe still waiting after 15s; no callback yet");
+    });
+}
 - (void)openFolderPickerUsingCompatibilityMode:(BOOL)compatibility {
     if (s_choosing || s_validating) return;
+    s_fileProbe = NO;
     s_choosing = YES;
     self.statusLabel.text = compatibility ? @"已启动兼容模式，请选择外部文件夹。" : @"请选择 iCloud Drive 或其他独立位置的子目录。";
     // Standard: Apple's documented folder-picker initializer and native presentation.
@@ -285,13 +321,27 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     });
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    PDLog(@"Directory picker cancelled; no directory URL granted");
-    s_choosing=NO;
-    self.statusLabel.text=@"未收到选中目录。如“打开”无反应，请从“浏览位置”进入 iCloud Drive 的具体子文件夹；也可以试试兼容模式。";
+    PDLog(@"Picker cancelled; type=%@; no URL granted", s_fileProbe ? @"file probe" : @"folder");
+    BOOL fileProbe = s_fileProbe;
+    s_fileProbe = NO;
+    s_choosing = NO;
+    self.statusLabel.text=fileProbe ? @"普通文件测试已取消，没有返回 URL。" :
+        @"未收到选中目录。请从“浏览位置”进入 iCloud Drive 的具体子文件夹。";
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    PDLog(@"Picker returned %lu URL(s)",(unsigned long)urls.count);
+    PDLog(@"Picker returned %lu URL(s); type=%@",(unsigned long)urls.count,s_fileProbe ? @"file probe" : @"folder");
     if (!s_choosing || s_validating) return; // tolerate duplicate legacy delegate callbacks
+    if (s_fileProbe) {
+        NSURL *selected = urls.firstObject;
+        PDLog(@"File selection probe result: success=%@, scheme=%@, isFileURL=%@, extension=%@ (content NOT read)",
+              selected ? @"yes" : @"no", selected.scheme ?: @"none",
+              selected.isFileURL ? @"yes" : @"no", selected.pathExtension ?: @"");
+        s_choosing = NO;
+        s_fileProbe = NO;
+        self.statusLabel.text = selected ? @"普通文件选择成功：已收到系统 URL，但未读取文件，也没有启用重定向。" :
+            @"普通文件选择未返回 URL。";
+        return;
+    }
     s_choosing=NO;
     s_validating=YES;
     NSURL *root=urls.firstObject;
