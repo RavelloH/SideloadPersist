@@ -46,6 +46,8 @@ jobs:
           HOME="$HOOK_HOME" /tmp/pd-preferences-smoke hooks
           FAULT_HOME="$(mktemp -d)"
           HOME="$FAULT_HOME" /tmp/pd-preferences-smoke fault
+          STRESS_HOME="$(mktemp -d)"
+          HOME="$STRESS_HOME" /tmp/pd-preferences-smoke stress
       - name: Test relocation, ZIP traversal protection and staged cold-start restore
         shell: bash
         run: |
