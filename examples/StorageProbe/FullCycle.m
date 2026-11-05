@@ -149,9 +149,22 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     id loaded=SPJSON(self.snapshotPath);
     self.baseline=[loaded isKindOfClass:NSDictionary.class] &&
         [loaded[@"format"] isEqual:@"StorageProbe.FullCycle.V2"] ? loaded : nil;
+    // The previous probe version mistakenly wrote 'complete=false' baselines.
+    // They are diagnostics, not proof of an install to compare against. Preserve
+    // them once and automatically start a fresh baseline without reinstalling.
+    BOOL priorInvalid=self.baseline && ![self.baseline[@"complete"] boolValue];
+    if(priorInvalid) {
+        NSString *prior=[self.root stringByAppendingPathComponent:@"fullcycle-prior-incomplete.json"];
+        if(![fm fileExistsAtPath:prior]) {
+            NSData *bytes=[NSData dataWithContentsOfFile:self.snapshotPath];
+            if(bytes) [bytes writeToFile:prior options:NSDataWritingAtomic error:nil];
+        }
+        self.baseline=nil;
+    }
     NSString *previous=self.baseline[@"installationID"];
     self.verifying=(previous.length && ![previous isEqualToString:install]);
     [self line:@"===== ONE-TAP FULL STORAGE CYCLE / v2 (Preferences) ====="];
+    if(priorInvalid) [self line:@"INVALID_BASELINE_ARCHIVED: old incomplete baseline ignored; starting a new local backup baseline without reinstalling"];
     [self line:[NSString stringWithFormat:@"PHASE=%@ installation=%@ baselineInstallation=%@",
         self.verifying?@"RESTORED_INSTALLATION_VERIFY":@"GENERATE_BACKUP_BASELINE",
         install,previous ?: @"none"]];
