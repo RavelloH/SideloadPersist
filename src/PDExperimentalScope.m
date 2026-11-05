@@ -47,9 +47,10 @@ static NSNumber *PDEntryCount(NSString *path) {
 // Each scope has its own transaction. One unmodifiable system-owned or
 // conflicting directory must never disable Application Support or other
 // already-working scopes. No nonempty directory is overwritten/deleted.
-static BOOL PDRelocateOne(NSString *name, NSString *home, NSString *root, NSString **reason) {
+static BOOL PDRelocateOne(NSString *name, NSString *home, NSString *root,
+                          NSString *targetOverride, NSString **reason) {
     NSString *source=[[home stringByAppendingPathComponent:@"Library"] stringByAppendingPathComponent:name];
-    NSString *target=[[root stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:name];
+    NSString *target=targetOverride ?: [[root stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:name];
     struct stat src={0},dst={0};
     BOOL haveSrc=PDStatRaw(source,&src);
     BOOL haveDst=PDStatRaw(target,&dst);
@@ -132,7 +133,7 @@ BOOL PDRelocateExtendedScopes(NSString *home,NSString *root) {
         NSString *src=[[home stringByAppendingPathComponent:@"Library"] stringByAppendingPathComponent:name];
         NSString *dst=[[root stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:name];
         NSString *reason=nil;
-        BOOL mapped=PDRelocateOne(name,home,root,&reason);
+        BOOL mapped=PDRelocateOne(name,home,root,nil,&reason);
         if(!mapped) allOkay=NO;
         [statuses addObject:@{
             @"scope":name,
@@ -163,4 +164,14 @@ BOOL PDInitializeExtraScopes(void) {
     NSString *report=[PDStorageRoot() stringByAppendingPathComponent:@"scope-mapping-result.txt"];
     [(ok?@"ready":@"partial") writeToFile:report atomically:YES encoding:NSUTF8StringEncoding error:nil];
     return ok;
+}
+
+BOOL PDRelocateLibraryDirectory(NSString *name,NSString *home,
+                                NSString *target,NSString **reason) {
+    if(!name.length || !home.length || !target.length) {
+        if(reason) *reason=@"invalid-library-mapping";
+        return NO;
+    }
+    NSString *fallback=nil;
+    return PDRelocateOne(name,home,nil,target,reason ?: &fallback);
 }
