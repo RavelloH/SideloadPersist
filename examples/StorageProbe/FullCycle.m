@@ -290,8 +290,8 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         @"Documents/SideloadPersist/Data/Application Support/SideloadPersist.Library/StorageProbeCustomPersistent"];
     char linkDestination[4096]={0};
     ssize_t length=readlink(custom.fileSystemRepresentation,linkDestination,sizeof(linkDestination)-1);
-    BOOL mapped=length>0 && [backup isEqualToString:[NSString stringWithUTF8String:linkDestination]];
-    [self check:mapped label:@"APP_PRIVATE_LIBRARY StorageProbeCustomPersistent mapped to existing AppSupport backup"];
+    BOOL customMapped=length>0 && [backup isEqualToString:[NSString stringWithUTF8String:linkDestination]];
+    [self check:customMapped label:@"APP_PRIVATE_LIBRARY StorageProbeCustomPersistent mapped to existing AppSupport backup"];
     NSDictionary *manifest=SPJSON([self.root stringByAppendingPathComponent:@"manifest.json"]);
     BOOL declared=NO;
     for(NSDictionary *mapping in manifest[@"additionalLibraryMappings"]) {
@@ -304,7 +304,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         [backup stringByAppendingPathComponent:@"marker.txt"] encoding:NSUTF8StringEncoding error:nil];
     [self check:[persisted isEqualToString:value] label:@"APP_PRIVATE_LIBRARY original marker resides inside backup scope"];
     [self researchMetric:@"customLibraryMarker" before:old after:value];
-    if(self.verifying && mapped) [self compare:@"customLibraryMarker" actual:old];
+    if(self.verifying && customMapped) [self compare:@"customLibraryMarker" actual:old];
     NSDictionary *discovery=SPJSON([self.root stringByAppendingPathComponent:@"library-discovery.json"]);
     [self line:[NSString stringWithFormat:@"LIBRARY_MIGRATION_DIAGNOSTIC mapped=%@ conflicts=%@ unselected=%@",
         discovery[@"mapped"] ?: @[],discovery[@"conflicts"] ?: @"unknown",
