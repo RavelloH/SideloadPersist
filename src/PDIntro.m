@@ -3,14 +3,26 @@
 #import "PDArchive.h"
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <stdlib.h>
 
-static NSString *const kIntroShown=@"SideloadPersist.IntroAccepted.v2";
-static BOOL s_presenting=NO;
+static NSString *const kIntroShown = @"SideloadPersist.IntroAccepted.v2";
+static BOOL s_presenting = NO;
+static BOOL s_importInProgress = NO;
 
-@interface PDIntroController : UIViewController <UIDocumentPickerDelegate>
-@property(nonatomic,strong) UILabel *status;
+static UIColor *PDAccent(void) { return [UIColor colorWithRed:0.20 green:0.57 blue:0.95 alpha:1]; }
+static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGroupedBackgroundColor; }
+
+@interface PDWelcomeController : UIViewController <UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate>
 @property(nonatomic,strong) UIButton *importButton;
+@property(nonatomic,strong) UILabel *statusLabel;
+@property(nonatomic,strong) UIView *bodyContainer;
+@property(nonatomic,assign) BOOL committed;
+- (void)presentCompletion;
 @end
+
+@interface PDCompleteController : UIViewController
+@end
+
 @interface PDIntroManager : NSObject
 + (instancetype)shared;
 - (void)tryPresent;
@@ -18,35 +30,41 @@ static BOOL s_presenting=NO;
 
 @implementation PDIntroManager
 + (instancetype)shared {
-    static PDIntroManager *m; static dispatch_once_t once;
-    dispatch_once(&once,^{ m=[[self alloc] init]; }); return m;
+    static PDIntroManager *manager;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ manager = [PDIntroManager new]; });
+    return manager;
 }
 - (void)tryPresent {
-    if (s_presenting || [[NSUserDefaults standardUserDefaults] boolForKey:kIntroShown]) return;
-    UIApplication *app=UIApplication.sharedApplication;
-    if (!app) return;
-    for (UIScene *scene in app.connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]] ||
-            scene.activationState!=UISceneActivationStateForegroundActive) continue;
+    if (s_presenting) return;
+    BOOL pending = PDArchivePendingID().length > 0;
+    BOOL seen = [[NSUserDefaults standardUserDefaults] boolForKey:kIntroShown];
+    if (seen && !pending) return;
+    UIApplication *application = UIApplication.sharedApplication;
+    for (UIScene *scene in application.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] ||
+            scene.activationState != UISceneActivationStateForegroundActive) continue;
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             if (!window.isKeyWindow || window.hidden || !window.rootViewController) continue;
-            UIViewController *top=window.rootViewController;
-            while (top.presentedViewController) top=top.presentedViewController;
-            if (!top.view.window || top.isBeingPresented || top.isBeingDismissed) continue;
-            PDIntroController *intro=[[PDIntroController alloc] init];
-            intro.modalPresentationStyle=UIModalPresentationPageSheet;
-            if (@available(iOS 15.0,*)) {
-                UISheetPresentationController *sheet=intro.sheetPresentationController;
-                if (sheet) {
-                    sheet.detents=@[[UISheetPresentationControllerDetent mediumDetent],
-                                    [UISheetPresentationControllerDetent largeDetent]];
-                    sheet.prefersGrabberVisible=YES;
-                    sheet.prefersScrollingExpandsWhenScrolledToEdge=YES;
-                }
+            UIViewController *presenter = window.rootViewController;
+            while (presenter.presentedViewController) presenter = presenter.presentedViewController;
+            if (!presenter.view.window || presenter.isBeingPresented || presenter.isBeingDismissed) continue;
+            PDWelcomeController *controller = [PDWelcomeController new];
+            controller.modalPresentationStyle = UIModalPresentationPageSheet;
+            if (@available(iOS 15.0, *)) {
+                UISheetPresentationController *sheet = controller.sheetPresentationController;
+                sheet.detents = @[[UISheetPresentationControllerDetent mediumDetent]];
+                sheet.selectedDetentIdentifier = UISheetPresentationControllerDetentIdentifierMedium;
+                sheet.prefersGrabberVisible = YES;
+                sheet.prefersScrollingExpandsWhenScrolledToEdge = NO;
+                sheet.preferredCornerRadius = 28;
             }
-            s_presenting=YES;
-            PDStorageTrace(@"Presenting first-run introduction sheet");
-            [top presentViewController:intro animated:YES completion:nil];
+            controller.presentationController.delegate=controller;
+            s_presenting = YES;
+            PDStorageTrace(@"Showing first-run sheet; pending restore=%@",pending?@"yes":@"no");
+            [presenter presentViewController:controller animated:YES completion:^{
+                if (pending) [controller presentCompletion];
+            }];
             return;
         }
     }
@@ -54,177 +72,362 @@ static BOOL s_presenting=NO;
 @end
 
 void PDIntroInstall(void) {
-    PDIntroManager *m=[PDIntroManager shared];
-    NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
-    [center addObserver:m selector:@selector(tryPresent) name:UIApplicationDidBecomeActiveNotification object:nil];
-    [center addObserver:m selector:@selector(tryPresent) name:UISceneDidActivateNotification object:nil];
-    [center addObserver:m selector:@selector(tryPresent) name:UIWindowDidBecomeKeyNotification object:nil];
-    [m tryPresent];
+    PDIntroManager *manager = [PDIntroManager shared];
+    NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+    [center addObserver:manager selector:@selector(tryPresent) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [center addObserver:manager selector:@selector(tryPresent) name:UISceneDidActivateNotification object:nil];
+    [center addObserver:manager selector:@selector(tryPresent) name:UIWindowDidBecomeKeyNotification object:nil];
+    [manager tryPresent];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1*NSEC_PER_SEC)),
-                   dispatch_get_main_queue(),^{ [m tryPresent]; });
+                   dispatch_get_main_queue(), ^{ [manager tryPresent]; });
 }
 
-@implementation PDIntroController
-- (UILabel *)label:(NSString *)text size:(CGFloat)size color:(UIColor *)color {
-    UILabel *label=[[UILabel alloc] init];
-    label.text=text;
-    label.font=[UIFont systemFontOfSize:size];
-    label.numberOfLines=0;
-    label.textColor=color;
-    label.textAlignment=NSTextAlignmentCenter;
+static UILabel *PDLabel(NSString *message, CGFloat size, UIFontWeight weight, UIColor *color) {
+    UILabel *label = [UILabel new];
+    label.text = message;
+    label.font = [UIFont systemFontOfSize:size weight:weight];
+    label.textColor = color;
+    label.numberOfLines = 0;
     return label;
 }
-- (UIButton *)button:(NSString *)name action:(SEL)action prominent:(BOOL)prominent {
-    UIButton *btn=[UIButton buttonWithType:UIButtonTypeSystem];
-    [btn setTitle:name forState:UIControlStateNormal];
-    btn.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    if (prominent) {
-        btn.backgroundColor=UIColor.systemBlueColor;
-        [btn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    } else btn.backgroundColor=UIColor.tertiarySystemFillColor;
-    btn.layer.cornerRadius=12;
-    [btn.heightAnchor constraintGreaterThanOrEqualToConstant:46].active=YES;
-    [btn addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
-    return btn;
+static UIButton *PDButton(NSString *title, BOOL filled) {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    [button setTitle:title forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    button.layer.cornerRadius = 15;
+    button.clipsToBounds = YES;
+    button.backgroundColor = filled ? PDAccent() : PDSecondaryBackground();
+    [button setTitleColor:filled ? UIColor.whiteColor : UIColor.labelColor forState:UIControlStateNormal];
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    [button.heightAnchor constraintEqualToConstant:49].active = YES;
+    return button;
 }
+static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor *color) {
+    UIImageSymbolConfiguration *symbolConfig = [UIImageSymbolConfiguration configurationWithPointSize:size weight:UIImageSymbolWeightSemibold];
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:name withConfiguration:symbolConfig]];
+    icon.tintColor = color;
+    icon.translatesAutoresizingMaskIntoConstraints = NO;
+    [container addSubview:icon];
+    [NSLayoutConstraint activateConstraints:@[
+        [icon.centerXAnchor constraintEqualToAnchor:container.centerXAnchor],
+        [icon.centerYAnchor constraintEqualToAnchor:container.centerYAnchor]
+    ]];
+}
+
+@implementation PDWelcomeController
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor=UIColor.systemBackgroundColor;
-    NSString *appName=NSBundle.mainBundle.infoDictionary[@"CFBundleDisplayName"] ?:
-                      NSBundle.mainBundle.infoDictionary[@"CFBundleName"] ?: @"当前 App";
-    UILabel *heading=[self label:@"SideloadPersist" size:24 color:UIColor.labelColor];
-    heading.font=[UIFont boldSystemFontOfSize:24];
-    UILabel *intro=[self label:@"已为当前应用准备可在「文件」App 中访问的数据目录。\n后续运行将静默工作，不会反复弹窗。"
-                         size:14 color:UIColor.secondaryLabelColor];
-    UILabel *path=[self label:[NSString stringWithFormat:@"在我的 iPhone › %@ › SideloadPersist",appName]
-                        size:14 color:UIColor.labelColor];
-    path.font=[UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightMedium];
-    path.numberOfLines=0;
-    self.status=[self label:[NSString stringWithFormat:@"状态：%@",PDStorageStatusText()]
-                       size:13 color:(PDStorageGetState()==PDStorageStateFailed ||
-                         PDStorageGetState()==PDStorageStateConflict) ? UIColor.systemRedColor : UIColor.secondaryLabelColor];
-    UILabel *hint=[self label:@"签名过期但应用仍安装时，可在「文件」App 中备份此文件夹。\n换证书重新安装后，先打开 App 初始化，再退出；将备份数据恢复到此目录，下次启动时即可恢复映射。\n删除 App 前必须另存副本；卸载会删除本地 Documents。"
-                       size:12 color:UIColor.secondaryLabelColor];
-    UILabel *warning=[self label:PDStorageIsFileSharingEnabled() ?
-        @"文件共享已启用。当前仅重定位 Library/Application Support；Preferences、Keychain 和其他系统数据暂未覆盖。" :
-        @"当前 IPA 未同时开启文件共享与原地打开文件。请在签名工具中开启「文件访问」，否则文件夹可能不会显示在「文件」App 中。"
-        size:12 color:UIColor.systemOrangeColor];
-    UIButton *openFiles=[self button:@"在「文件」App 中打开" action:@selector(openFiles) prominent:NO];
-    self.importButton=[self button:@"导入备份 ZIP" action:@selector(chooseImport) prominent:NO];
-    UIButton *done=[self button:@"完成 · 以后静默运行" action:@selector(accept) prominent:YES];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    UIView *icon = [UIView new];
+    icon.translatesAutoresizingMaskIntoConstraints = NO;
+    icon.backgroundColor = [PDAccent() colorWithAlphaComponent:0.13];
+    icon.layer.cornerRadius = 22;
+    [icon.widthAnchor constraintEqualToConstant:67].active=YES;
+    [icon.heightAnchor constraintEqualToConstant:67].active=YES;
+    PDAddSymbol(icon, @"externaldrive.fill", 30, PDAccent());
+
+    UILabel *heading = PDLabel(@"SideloadPersist", 31, UIFontWeightBold, UIColor.labelColor);
+    heading.textAlignment = NSTextAlignmentCenter;
+    UILabel *subtitle = PDLabel(@"让侧载应用的数据不再被签名有效期束缚。", 15,
+                                UIFontWeightRegular, UIColor.secondaryLabelColor);
+    subtitle.textAlignment = NSTextAlignmentCenter;
+
+    NSString *name = NSBundle.mainBundle.infoDictionary[@"CFBundleDisplayName"] ?:
+                     NSBundle.mainBundle.infoDictionary[@"CFBundleName"] ?: @"当前 App";
+    UILabel *pathTitle = PDLabel(@"持久化目录", 12, UIFontWeightMedium, UIColor.secondaryLabelColor);
+    UILabel *path = PDLabel([NSString stringWithFormat:@"在我的 iPhone  ›  %@  ›  SideloadPersist",name],
+                             13, UIFontWeightSemibold, UIColor.labelColor);
+    path.numberOfLines = 2;
+    UIView *pathCard = [UIView new];
+    pathCard.backgroundColor=PDSecondaryBackground();
+    pathCard.layer.cornerRadius=17;
+    UIStackView *pathStack=[[UIStackView alloc] initWithArrangedSubviews:@[pathTitle,path]];
+    pathStack.axis=UILayoutConstraintAxisVertical;
+    pathStack.spacing=5;
+    pathStack.translatesAutoresizingMaskIntoConstraints=NO;
+    [pathCard addSubview:pathStack];
+    [NSLayoutConstraint activateConstraints:@[
+        [pathStack.leadingAnchor constraintEqualToAnchor:pathCard.leadingAnchor constant:15],
+        [pathStack.trailingAnchor constraintEqualToAnchor:pathCard.trailingAnchor constant:-15],
+        [pathStack.topAnchor constraintEqualToAnchor:pathCard.topAnchor constant:12],
+        [pathStack.bottomAnchor constraintEqualToAnchor:pathCard.bottomAnchor constant:-12]
+    ]];
+
+    UIButton *files = PDButton(@"在「文件」App 中查看", NO);
+    [files addTarget:self action:@selector(openFiles) forControlEvents:UIControlEventTouchUpInside];
+    self.importButton = PDButton(@"导入备份 ZIP", NO);
+    [self.importButton addTarget:self action:@selector(chooseImport) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *guide = PDButton(@"使用与恢复指南", NO);
+    [guide addTarget:self action:@selector(showGuide) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *github = [UIButton buttonWithType:UIButtonTypeSystem];
+    [github setTitle:@"GitHub  ·  RavelloH" forState:UIControlStateNormal];
+    github.titleLabel.font=[UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    [github addTarget:self action:@selector(openRepository) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *done = PDButton(@"开始使用", YES);
+    [done addTarget:self action:@selector(accept) forControlEvents:UIControlEventTouchUpInside];
+
+    self.statusLabel = PDLabel([NSString stringWithFormat:@"● %@", PDStorageStatusText()],11,
+                               UIFontWeightMedium,UIColor.tertiaryLabelColor);
+    self.statusLabel.textAlignment=NSTextAlignmentCenter;
 
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:
-        @[heading,intro,path,openFiles,self.importButton,self.status,warning,hint,done]];
+       @[icon,heading,subtitle,pathCard,files,self.importButton,guide,github,self.statusLabel,done]];
     stack.axis=UILayoutConstraintAxisVertical;
-    stack.spacing=12;
-    stack.translatesAutoresizingMaskIntoConstraints=NO;
-    UIScrollView *scroll=[[UIScrollView alloc] init];
+    stack.alignment=UIStackViewAlignmentFill;
+    stack.spacing=10;
+    [stack setCustomSpacing:17 afterView:subtitle];
+    [stack setCustomSpacing:13 afterView:pathCard];
+    // Align the logo while keeping other controls full-width.
+    UIView *iconRow=[UIView new];
+    [icon removeFromSuperview];
+    icon.translatesAutoresizingMaskIntoConstraints=NO;
+    [iconRow addSubview:icon];
+    [NSLayoutConstraint activateConstraints:@[
+        [icon.topAnchor constraintEqualToAnchor:iconRow.topAnchor],
+        [icon.bottomAnchor constraintEqualToAnchor:iconRow.bottomAnchor],
+        [icon.centerXAnchor constraintEqualToAnchor:iconRow.centerXAnchor],
+    ]];
+    [stack insertArrangedSubview:iconRow atIndex:0];
+
+    UIScrollView *scroll=[UIScrollView new];
     scroll.translatesAutoresizingMaskIntoConstraints=NO;
     scroll.alwaysBounceVertical=YES;
     [self.view addSubview:scroll];
+    stack.translatesAutoresizingMaskIntoConstraints=NO;
     [scroll addSubview:stack];
     UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
-        [scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
-        [scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
         [scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],
         [scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
+        [scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
         [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:22],
-        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-20],
-        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:20],
-        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-20],
-        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40],
+        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],
+        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:22],
+        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-22],
+        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-44],
     ]];
+    self.bodyContainer=stack;
 }
-- (void)showMessage:(NSString *)title body:(NSString *)body {
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:body
-                                                   preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController {
+    if (!self.committed && !s_importInProgress) {
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kIntroShown];
+        s_presenting=NO;
+    }
+}
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (PDArchivePendingID().length && !self.committed) [self presentCompletion];
+}
+- (void)showMessage:(NSString *)title body:(NSString *)message {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:title
+         message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)openFiles {
-    NSString *path=PDStorageRoot();
-    NSCharacterSet *allowed=[NSCharacterSet URLPathAllowedCharacterSet];
-    NSString *encoded=[path stringByAddingPercentEncodingWithAllowedCharacters:allowed] ?: path;
-    NSURL *url=[NSURL URLWithString:[@"shareddocuments://" stringByAppendingString:encoded]];
-    // shareddocuments is an undocumented Files app URL scheme, not a public API.
-    // Do not treat success as guaranteed across iOS versions or signing tools.
-    if (!url) {
-        [self showMessage:@"请手动打开文件 App" body:@"在我的 iPhone → 当前 App → SideloadPersist"];
-        return;
-    }
-    [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:^(BOOL success) {
-        if (!success) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showMessage:@"请手动打开文件 App"
-                             body:@"无法直接跳转。请前往「文件」→「浏览」→「在我的 iPhone」→ 当前 App → SideloadPersist。"];
-            });
-        }
+    NSString *encoded=[PDStorageRoot() stringByAddingPercentEncodingWithAllowedCharacters:
+                       NSCharacterSet.URLPathAllowedCharacterSet];
+    NSURL *url=[NSURL URLWithString:[@"shareddocuments://" stringByAppendingString:encoded ?: @""]];
+    if (!url) return;
+    [UIApplication.sharedApplication openURL:url options:@{} completionHandler:^(BOOL worked) {
+        if (!worked) dispatch_async(dispatch_get_main_queue(),^{
+            [self showMessage:@"在「文件」App 中查找"
+                         body:@"打开「浏览」→「在我的 iPhone」→ 当前应用 → SideloadPersist。"];
+        });
     }];
 }
+- (void)openRepository {
+    NSURL *url=[NSURL URLWithString:@"https://github.com/RavelloH/SideloadPersist"];
+    [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
+}
+- (void)showGuide {
+    UIViewController *guide=[UIViewController new];
+    guide.view.backgroundColor=UIColor.systemBackgroundColor;
+    UILabel *title=PDLabel(@"数据如何保留与恢复",28,UIFontWeightBold,UIColor.labelColor);
+    UILabel *lead=PDLabel(@"SideloadPersist 将受支持的数据保存到当前 App 可通过「文件」访问的目录。删除应用前务必备份。",15,UIFontWeightRegular,UIColor.secondaryLabelColor);
+    NSMutableArray *views=[NSMutableArray arrayWithObjects:title,lead,nil];
+    NSArray *heads=@[@"正常使用",@"签名过期时",@"重新安装",@"恢复备份"];
+    NSArray *details=@[
+        @"无需操作，插件会静默使用持久化目录。",
+        @"应用仍安装时，前往「文件」App，把 SideloadPersist 文件夹完整复制到安全位置。",
+        @"重签名并安装 App，打开一次完成初始化。删除旧 App 前必须确认备份已在 App 外。",
+        @"通过首页导入备份 ZIP（或复制到 Inbox），等待校验完成。按提示关闭并重新打开 App，冷启动时完成恢复。"];
+    for(NSUInteger i=0;i<heads.count;i++){
+        UILabel *number=PDLabel([NSString stringWithFormat:@"%lu", (unsigned long)(i+1)],48,UIFontWeightBold,[PDAccent() colorWithAlphaComponent:0.55]);
+        [number.widthAnchor constraintEqualToConstant:52].active=YES;
+        UILabel *header=PDLabel(heads[i],18,UIFontWeightSemibold,UIColor.labelColor);
+        UILabel *detail=PDLabel(details[i],14,UIFontWeightRegular,UIColor.secondaryLabelColor);
+        UIStackView *text=[[UIStackView alloc] initWithArrangedSubviews:@[header,detail]];
+        text.axis=UILayoutConstraintAxisVertical; text.spacing=4;
+        UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[number,text]];
+        row.axis=UILayoutConstraintAxisHorizontal; row.alignment=UIStackViewAlignmentTop;
+        row.spacing=12;
+        [views addObject:row];
+    }
+    UIButton *finish=PDButton(@"返回",YES);
+    [finish addTarget:self action:@selector(closeGuide) forControlEvents:UIControlEventTouchUpInside];
+    [views addObject:finish];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:views];
+    stack.axis=UILayoutConstraintAxisVertical; stack.spacing=26;
+    stack.translatesAutoresizingMaskIntoConstraints=NO;
+    UIScrollView *scroll=[UIScrollView new];scroll.translatesAutoresizingMaskIntoConstraints=NO;
+    [guide.view addSubview:scroll];[scroll addSubview:stack];
+    UILayoutGuide *safe=guide.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
+        [scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:44],
+        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-28],
+        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:28],
+        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-28],
+        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-56]
+    ]];
+    guide.modalPresentationStyle=UIModalPresentationFullScreen;
+    [self presentViewController:guide animated:YES completion:nil];
+}
+- (void)closeGuide {
+    [self.presentedViewController dismissViewControllerAnimated:YES completion:nil];
+}
 - (void)chooseImport {
-    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"导入备份 ZIP"
-        message:@"不会立即覆盖运行中的数据。先验证并暂存，完全退出后再次启动时应用恢复。也可以把 ZIP 放入 SideloadPersist/Inbox，再从此处导入。"
-        preferredStyle:UIAlertControllerStyleActionSheet];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"从文件选择器导入"
-          style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) {
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"导入备份"
+      message:@"文件将先经过检查，完成后进入待恢复状态；不会立刻覆盖运行中的数据库。"
+      preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"选择 ZIP 文件"
+     style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){
         UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
-             initForOpeningContentTypes:@[UTTypeZIP] asCopy:YES];
+          initForOpeningContentTypes:@[UTTypeZIP] asCopy:YES];
         picker.delegate=self;
-        picker.allowsMultipleSelection=NO;
         [self presentViewController:picker animated:YES completion:nil];
-    }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"扫描 Inbox 中的 ZIP"
-           style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) {
-        NSArray *files=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:PDStorageInbox() error:nil];
-        NSMutableArray<NSString *> *zips=[NSMutableArray array];
-        for (NSString *f in files) if ([f.pathExtension.lowercaseString isEqualToString:@"zip"])
-            [zips addObject:f];
-        if (zips.count!=1) {
-            [self showMessage:@"未找到唯一 ZIP" body:@"请把一个备份 .zip 文件放在「SideloadPersist/Inbox」中，再重试。"];
+     }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"从 Inbox 导入 ZIP"
+     style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){
+        NSArray *files=[NSFileManager.defaultManager contentsOfDirectoryAtPath:PDStorageInbox() error:nil];
+        NSMutableArray *zips=[NSMutableArray array];
+        for(NSString *file in files) if([file.pathExtension.lowercaseString isEqualToString:@"zip"]) [zips addObject:file];
+        if(zips.count != 1) {
+            [self showMessage:@"未找到唯一备份" body:@"请先将一个 .zip 文件复制至 SideloadPersist/Inbox，再重试。"];
             return;
         }
         [self stageImport:[NSURL fileURLWithPath:[PDStorageInbox() stringByAppendingPathComponent:zips.firstObject]]];
-    }]];
+     }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    if (sheet.popoverPresentationController) {
+    if(sheet.popoverPresentationController){
         sheet.popoverPresentationController.sourceView=self.importButton;
         sheet.popoverPresentationController.sourceRect=self.importButton.bounds;
     }
     [self presentViewController:sheet animated:YES completion:nil];
 }
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    NSURL *url=urls.firstObject;
-    if (url) [self stageImport:url];
+- (void)documentPicker:(UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    if(urls.firstObject) [self stageImport:urls.firstObject];
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    PDStorageTrace(@"ZIP import picker cancelled");
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)picker {
+    PDStorageTrace(@"User cancelled backup import");
 }
 - (void)stageImport:(NSURL *)url {
+    if(s_importInProgress || self.committed) return;
+    s_importInProgress=YES;
     self.importButton.enabled=NO;
-    self.status.text=@"正在隔离校验 ZIP 数据，请勿退出…";
+    self.statusLabel.text=@"正在验证并暂存备份…";
+    // Prevent dismissal while data is still being extracted to a staging directory.
+    self.isModalInPresentation=YES;
     __weak typeof(self) weakSelf=self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         NSError *error=nil;
         NSString *identifier=PDArchiveStageZIP(url,&error);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            PDIntroController *strong=weakSelf;
-            if (!strong) return;
-            strong.importButton.enabled=YES;
-            if (identifier) {
-                strong.status.text=@"备份已暂存。完全退出当前 App，重新启动后恢复生效。";
-                [strong showMessage:@"备份已准备"
-                               body:@"当前运行中的数据未被覆盖。请完全退出 App 后重新打开，插件将在主程序启动前替换 Application Support，并将旧数据保留在 SideloadPersist/Backups。"];
+        dispatch_async(dispatch_get_main_queue(),^{
+            PDWelcomeController *strong=weakSelf;
+            s_importInProgress=NO;
+            if(!strong) return;
+            if(identifier) {
+                strong.committed=YES;
+                [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kIntroShown];
+                PDStorageTrace(@"Backup validated and staged; awaiting explicit process restart");
+                [strong presentCompletion];
             } else {
-                strong.status.text=@"导入失败，原有数据未修改。";
-                [strong showMessage:@"导入失败" body:error.localizedDescription ?: @"压缩包验证未通过"];
+                strong.isModalInPresentation=NO;
+                strong.importButton.enabled=YES;
+                strong.statusLabel.text=@"导入失败，原数据未更改。";
+                [strong showMessage:@"无法导入" body:error.localizedDescription ?: @"备份校验失败。"];
             }
         });
     });
 }
+- (void)presentCompletion {
+    if(self.presentedViewController && ![self.presentedViewController isBeingDismissed]) return;
+    self.committed=YES;
+    self.isModalInPresentation=YES;
+    if(@available(iOS 15.0,*)) {
+        UISheetPresentationController *sheet=self.sheetPresentationController;
+        if(sheet) [sheet animateChanges:^{
+            sheet.detents=@[[UISheetPresentationControllerDetent largeDetent]];
+            sheet.selectedDetentIdentifier=UISheetPresentationControllerDetentIdentifierLarge;
+            sheet.prefersGrabberVisible=NO;
+        }];
+    }
+    PDCompleteController *screen=[PDCompleteController new];
+    screen.modalPresentationStyle=UIModalPresentationFullScreen;
+    screen.isModalInPresentation=YES;
+    [self presentViewController:screen animated:YES completion:nil];
+}
 - (void)accept {
+    if (self.committed || s_importInProgress || PDArchivePendingID().length) return;
     [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kIntroShown];
     s_presenting=NO;
     [self dismissViewControllerAnimated:YES completion:nil];
+}
+@end
+
+@implementation PDCompleteController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor=UIColor.systemBackgroundColor;
+    self.isModalInPresentation=YES;
+    UIView *circle=[UIView new];
+    circle.backgroundColor=[UIColor systemGreenColor];
+    circle.layer.cornerRadius=49;
+    circle.translatesAutoresizingMaskIntoConstraints=NO;
+    [circle.widthAnchor constraintEqualToConstant:98].active=YES;
+    [circle.heightAnchor constraintEqualToConstant:98].active=YES;
+    PDAddSymbol(circle,@"checkmark",48,UIColor.whiteColor);
+    UILabel *heading=PDLabel(@"备份已安全导入",30,UIFontWeightBold,UIColor.labelColor);
+    heading.textAlignment=NSTextAlignmentCenter;
+    UILabel *detail=PDLabel(@"文件已校验并暂存，当前运行中的数据尚未被覆盖。\n\n需要彻底退出并重新打开 App，插件才能在启动阶段完成恢复。",16,UIFontWeightRegular,UIColor.secondaryLabelColor);
+    detail.textAlignment=NSTextAlignmentCenter;
+    UIButton *quit=PDButton(@"退出 App · 完成恢复准备",YES);
+    [quit addTarget:self action:@selector(quitNow) forControlEvents:UIControlEventTouchUpInside];
+    UILabel *note=PDLabel(@"退出后请手动点击 App 图标重新打开。原有数据将保留在 Backups，便于回退。",12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
+    note.textAlignment=NSTextAlignmentCenter;
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[circle,heading,detail,quit,note]];
+    stack.axis=UILayoutConstraintAxisVertical;stack.spacing=20;
+    stack.translatesAutoresizingMaskIntoConstraints=NO;
+    [self.view addSubview:stack];
+    UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+       [stack.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor],
+       [stack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:28],
+       [stack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-28]
+    ]];
+    UIView *circleRow=[UIView new];
+    [circle removeFromSuperview]; [circleRow addSubview:circle];
+    [stack insertArrangedSubview:circleRow atIndex:0];
+    [NSLayoutConstraint activateConstraints:@[
+       [circle.topAnchor constraintEqualToAnchor:circleRow.topAnchor],
+       [circle.bottomAnchor constraintEqualToAnchor:circleRow.bottomAnchor],
+       [circle.centerXAnchor constraintEqualToAnchor:circleRow.centerXAnchor]
+    ]];
+    stack.alpha=0;
+    [UIView animateWithDuration:0.45 delay:0 options:UIViewAnimationOptionCurveEaseOut
+                     animations:^{stack.alpha=1;} completion:nil];
+}
+- (void)quitNow {
+    if (!PDArchivePendingID().length) return;
+    // iOS has no public self-relaunch API. This is a user-initiated exit of an
+    // already-staged restore; the next manual launch applies it in the constructor.
+    PDStorageTrace(@"User explicitly requested exit after staged restore; process terminating");
+    fflush(NULL);
+    exit(0);
 }
 @end
