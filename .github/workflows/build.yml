@@ -59,15 +59,18 @@ jobs:
             vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
             -o /tmp/pd-v2-storage-smoke
           MULTI_HOME="$(mktemp -d)"
-          HOME="$MULTI_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke prepare
-          HOME="$MULTI_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke apply
+          HOME="$MULTI_HOME" /tmp/pd-v2-storage-smoke prepare
+          HOME="$MULTI_HOME" /tmp/pd-v2-storage-smoke apply
+          FRESH_HOME="$(mktemp -d)"
+          HOME="$FRESH_HOME" /tmp/pd-v2-storage-smoke prepare-fresh
+          HOME="$FRESH_HOME" /tmp/pd-v2-storage-smoke apply-fresh
           REPLAY_HOME="$(mktemp -d)"
-          HOME="$REPLAY_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke prepare-interruption
-          HOME="$REPLAY_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke apply
+          HOME="$REPLAY_HOME" /tmp/pd-v2-storage-smoke prepare-interruption
+          HOME="$REPLAY_HOME" /tmp/pd-v2-storage-smoke apply
           ROLLBACK_HOME="$(mktemp -d)"
-          HOME="$ROLLBACK_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke prepare-rollback
-          HOME="$ROLLBACK_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 PD_V2_SMOKE_FAIL_SCOPE=WebKit /tmp/pd-v2-storage-smoke apply-rollback
-          HOME="$ROLLBACK_HOME" PD_STORAGE_SMOKE_ALLOW_V2=1 /tmp/pd-v2-storage-smoke apply
+          HOME="$ROLLBACK_HOME" /tmp/pd-v2-storage-smoke prepare-rollback
+          HOME="$ROLLBACK_HOME" PD_V2_SMOKE_FAIL_SCOPE=WebKit /tmp/pd-v2-storage-smoke apply-rollback
+          HOME="$ROLLBACK_HOME" /tmp/pd-v2-storage-smoke apply
       - name: Build independent unsigned PickerProbe IPA
         shell: bash
         run: |

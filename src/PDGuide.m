@@ -3,8 +3,8 @@
 
 @interface PDGuideController ()
 @property(nonatomic,strong) UIScrollView *scrollView;
-@property(nonatomic,strong) UIVisualEffectView *topFade;
-@property(nonatomic,strong) UIVisualEffectView *bottomFade;
+@property(nonatomic,strong) UIView *topFade;
+@property(nonatomic,strong) UIView *bottomFade;
 @property(nonatomic,strong) CAGradientLayer *topMask;
 @property(nonatomic,strong) CAGradientLayer *bottomMask;
 @end
@@ -68,7 +68,7 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
     for (NSUInteger i=0;i<headings.count;i++) {
         [rows addObject:PDGuideStep(i,headings[i],descriptions[i])];
     }
-    UILabel *footnote=PDGuideLabel(@"目前仅自动重定位 Application Support 等已验证的数据；Preferences、Keychain、WebKit 等仍在研究中。删除 App 前，必须确认备份已经放在 App 目录外。",
+    UILabel *footnote=PDGuideLabel(@"当前自动重定位 Application Support、WebKit 和 Cookies。Preferences、Keychain 等仍不在备份范围内。删除 App 前，务必将压缩包保存到 App 文件夹之外。",
                                    12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
     [rows addObject:footnote];
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:rows];
@@ -89,10 +89,10 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
     [self.view addSubview:scroll];
     [scroll addSubview:stack];
 
-    // A native blur material stays fixed at the bottom, including the home
-    // indicator area. The action is never part of the scrolling content.
-    UIBlurEffect *material=[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
-    UIVisualEffectView *footer=[[UIVisualEffectView alloc] initWithEffect:material];
+    // The bottom action stays fixed and uses the *same dynamic background*
+    // as the guide. System blur materials tinted this dark page grey.
+    UIView *footer=[UIView new];
+    footer.backgroundColor=UIColor.systemBackgroundColor;
     footer.translatesAutoresizingMaskIntoConstraints=NO;
     [self.view addSubview:footer];
     UIButton *back=[UIButton buttonWithType:UIButtonTypeSystem];
@@ -104,7 +104,7 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
     back.layer.cornerRadius=15;
     back.clipsToBounds=YES;
     [back addTarget:self action:@selector(closeGuide) forControlEvents:UIControlEventTouchUpInside];
-    [footer.contentView addSubview:back];
+    [footer addSubview:back];
 
     UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
@@ -122,20 +122,19 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
         [footer.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [footer.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [footer.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
-        [back.leadingAnchor constraintEqualToAnchor:footer.contentView.leadingAnchor constant:24],
-        [back.trailingAnchor constraintEqualToAnchor:footer.contentView.trailingAnchor constant:-24],
-        [back.topAnchor constraintEqualToAnchor:footer.contentView.topAnchor constant:13],
+        [back.leadingAnchor constraintEqualToAnchor:footer.leadingAnchor constant:24],
+        [back.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor constant:-24],
+        [back.topAnchor constraintEqualToAnchor:footer.topAnchor constant:13],
         [back.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-10],
         [back.heightAnchor constraintEqualToConstant:52],
     ]];
 
-    // Blur the scrolling edges instead of abruptly clipping text. These
-    // overlays are noninteractive and their gradient alpha changes as the
-    // user approaches the start or end of the guide.
-    self.topFade=[[UIVisualEffectView alloc] initWithEffect:
-                  [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
-    self.bottomFade=[[UIVisualEffectView alloc] initWithEffect:
-                     [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
+    // Match the scroll boundary to the actual system background instead of
+    // using a material blur, which creates a visible grey fringe on OLED black.
+    // The two fades are independent of the scrolling content and do not
+    // intercept taps or gestures.
+    self.topFade=[UIView new];
+    self.bottomFade=[UIView new];
     self.topFade.translatesAutoresizingMaskIntoConstraints=NO;
     self.bottomFade.translatesAutoresizingMaskIntoConstraints=NO;
     self.topFade.userInteractionEnabled=NO;
@@ -155,18 +154,27 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
     ]];
 
     CAGradientLayer *top=[CAGradientLayer layer];
-    top.colors=@[(id)UIColor.blackColor.CGColor,(id)UIColor.clearColor.CGColor];
     top.startPoint=CGPointMake(0,0);
     top.endPoint=CGPointMake(0,1);
-    self.topFade.layer.mask=top;
+    [self.topFade.layer addSublayer:top];
     self.topMask=top;
 
     CAGradientLayer *bottom=[CAGradientLayer layer];
-    bottom.colors=@[(id)UIColor.clearColor.CGColor,(id)UIColor.blackColor.CGColor];
     bottom.startPoint=CGPointMake(0,0);
     bottom.endPoint=CGPointMake(0,1);
-    self.bottomFade.layer.mask=bottom;
+    [self.bottomFade.layer addSublayer:bottom];
     self.bottomMask=bottom;
+    [self updateFadeColors];
+}
+- (void)updateFadeColors {
+    UIColor *base=[UIColor.systemBackgroundColor resolvedColorWithTraitCollection:self.traitCollection];
+    UIColor *clear=[base colorWithAlphaComponent:0];
+    self.topMask.colors=@[(__bridge id)base.CGColor,(__bridge id)clear.CGColor];
+    self.bottomMask.colors=@[(__bridge id)clear.CGColor,(__bridge id)base.CGColor];
+}
+- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
+    [super traitCollectionDidChange:previousTraitCollection];
+    [self updateFadeColors];
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];

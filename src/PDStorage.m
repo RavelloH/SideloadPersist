@@ -173,13 +173,24 @@ PDStorageState PDStorageBootstrap(void) {
             PDSetStatus(PDStorageStateFailed,@"无法建立 Documents 持久化目录");
             return s_state;
         }
-        // Restore only into an existing target or BEFORE mounting a new link.
+        // Automatically mount WebKit and Cookies for every injected app.
+        // If a restore is pending, replay it first: a directory may be
+        // temporarily parked under Backups after an interrupted transaction.
+        BOOL hadPendingRestore=[NSFileManager.defaultManager fileExistsAtPath:
+            [root stringByAppendingPathComponent:@"restore-pending.txt"]];
+        if (!hadPendingRestore && !PDInitializeExtraScopes()) {
+            PDSetStatus(PDStorageStateConflict,@"WebKit/Cookies 目录冲突，原数据未覆盖");
+            return s_state;
+        }
         if (!PDApplyPendingRestore()) {
             PDSetStatus(PDStorageStateConflict,@"检测到未完成的数据恢复，请先检查 Inbox、Incoming 和 Backups");
             return s_state;
         }
+        if(hadPendingRestore && !PDInitializeExtraScopes()) {
+            PDSetStatus(PDStorageStateConflict,@"恢复后 WebKit/Cookies 目录冲突，原数据未覆盖");
+            return s_state;
+        }
         if (PDLinkMatches(source,target)) {
-            PDExperimentalTryFromStorageProbe();
             PDWriteManifest();
             PDSetStatus(PDStorageStateReady,@"目录映射已存在");
             return s_state;
@@ -240,7 +251,6 @@ PDStorageState PDStorageBootstrap(void) {
             PDSetStatus(PDStorageStateFailed,@"符号链接验证失败");
             return s_state;
         }
-        PDExperimentalTryFromStorageProbe();
         PDWriteManifest();
         PDSetStatus(PDStorageStateRecovered,@"持久化目录已建立并验证");
         return s_state;

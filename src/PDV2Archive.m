@@ -66,15 +66,6 @@ static NSString *PDV2Relative(NSString *path,NSString **scopeOut) {
     }
     return nil;
 }
-BOOL PDV2AllowsExtraScopes(void) {
-#if TARGET_OS_OSX
-    if(strcmp(getenv("PD_STORAGE_SMOKE_ALLOW_V2") ?: "", "1")==0) return YES;
-#endif
-    if(![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.ravelloh.storageprobe"]) return NO;
-    if(![NSBundle.mainBundle.infoDictionary[@"SideloadPersistExperimentalWebKitRelocation"] boolValue]) return NO;
-    return [[NSFileManager defaultManager] fileExistsAtPath:
-            [PDStorageRoot() stringByAppendingPathComponent:@"enable-webkit-experiment.flag"]];
-}
 static BOOL PDV2UnsupportedDataPath(NSString *name) {
     if(!name.length) return NO;
     NSArray<NSString *> *parts=[name componentsSeparatedByString:@"/"];
@@ -126,10 +117,6 @@ static void PDV2Fail(NSError **error,NSInteger code,NSString *message) {
     PDStorageTrace(@"V2 ZIP refused: %@",message);
 }
 NSString *PDV2StageZIP(NSURL *url,NSError **error) {
-    if(!PDV2AllowsExtraScopes()) {
-        PDV2Fail(error,1,@"当前 App 未启用多目录实验。为避免丢失 WebKit/Cookies 数据，已拒绝此备份。");
-        return nil;
-    }
     BOOL access=[url startAccessingSecurityScopedResource];
     mz_zip_archive zip={0};
     if(!mz_zip_reader_init_file(&zip,url.fileSystemRepresentation,0)) {

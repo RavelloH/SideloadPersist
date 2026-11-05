@@ -51,8 +51,7 @@
     UIButton *copy=[self button:@"复制结果" action:@selector(copyResults)];
     UIButton *repeat=[self button:@"再次运行（验证持久化）" action:@selector(runTests)];
     UIButton *webKit=[self button:@"研究 WebKit / Preferences 存储范围" action:@selector(runExtendedScope)];
-    UIButton *relocate=[self button:@"实验：下次冷启动重定位 WebKit / Cookies" action:@selector(enableWebKitExperiment)];
-    UIStackView *buttons=[[UIStackView alloc] initWithArrangedSubviews:@[run,repeat,webKit,relocate,copy]];
+    UIStackView *buttons=[[UIStackView alloc] initWithArrangedSubviews:@[run,repeat,webKit,copy]];
     buttons.axis=UILayoutConstraintAxisVertical;
     buttons.spacing=10;
     self.output=[[UITextView alloc] init];
@@ -75,22 +74,6 @@
     ]];
     [self line:[NSString stringWithFormat:@"iOS=%@ bundle=%@",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier]];
     [self line:@"注入 dylib 后首次运行可能先显示持久化介绍页。关闭后测试。"];
-}
-- (void)enableWebKitExperiment {
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"仅用于 StorageProbe 的实验"
-      message:@"这将要求 SideloadPersist 在下一次冷启动时把 Library/WebKit 和 Library/Cookies 原子迁移到 Documents 下并建立符号链接。当前 ZIP 导入器尚未恢复这两个目录，不要用此实验迁移重要 App 的数据。完全结束 App 后才会生效。"
-      preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"启用并等待下次启动" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action){
-        NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/SideloadPersist"];
-        NSError *error=nil;
-        [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&error];
-        NSString *path=[dir stringByAppendingPathComponent:@"enable-webkit-experiment.flag"];
-        BOOL written=[@"StorageProbe opt-in only" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&error];
-        [self line:written ? @"EXPERIMENT_ARMED=yes; fully quit and relaunch app; then run WebKit probe" :
-                    [NSString stringWithFormat:@"EXPERIMENT_ARMED=no error=%@",error.localizedDescription]];
-    }]];
-    [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)reportScopeFootprints:(NSString *)phase {
     NSString *library=[NSHomeDirectory() stringByAppendingPathComponent:@"Library"];

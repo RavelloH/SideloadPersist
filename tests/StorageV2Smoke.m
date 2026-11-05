@@ -64,13 +64,36 @@ int main(int argc,char **argv) {
         NSString *cookie=[data stringByAppendingPathComponent:@"Cookies"];
         NSString *pending=[root stringByAppendingPathComponent:@"restore-pending.txt"];
         NSFileManager *fm=NSFileManager.defaultManager;
-        if(strcmp(argv[1],"prepare")==0 ||
+        if(strcmp(argv[1],"prepare-fresh")==0) {
+            check(PDStorageBootstrap()==PDStorageStateRecovered,@"brand new app initializes all scopes automatically");
+            struct stat st={0};
+            NSString *sourceWeb=[home stringByAppendingPathComponent:@"Library/WebKit"];
+            NSString *sourceCookies=[home stringByAppendingPathComponent:@"Library/Cookies"];
+            check(lstat(sourceWeb.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),
+                  @"fresh install auto-mounts WebKit without opt-in");
+            check(lstat(sourceCookies.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),
+                  @"fresh install auto-mounts Cookies without opt-in");
+            NSString *zip=[home stringByAppendingPathComponent:@"multi.zip"];
+            makeArchive(zip,NO);
+            NSError *error=nil;
+            NSString *id=PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error);
+            check(id.length==36,[NSString stringWithFormat:@"fresh app accepts v2 ZIP without markers: %@",error]);
+            check([fm fileExistsAtPath:pending],@"fresh installation has scheduled v2 restoration");
+            NSLog(@"Fresh install initialized and staged v2 recovery.");
+        } else if(strcmp(argv[1],"apply-fresh")==0) {
+            check(PDStorageBootstrap()==PDStorageStateReady,@"fresh install applies v2 backup after restart");
+            check(![fm fileExistsAtPath:pending],@"fresh recovery pending cleared");
+            check([readFile([app stringByAppendingPathComponent:@"test.sqlite"]) isEqualToString:@"APP_RESTORED"],@"AppSupport restored after reinstall");
+            check([readFile([web stringByAppendingPathComponent:@"localstorage.db"]) isEqualToString:@"WEB_RESTORED"],@"WebKit restored after reinstall");
+            check([readFile([cookie stringByAppendingPathComponent:@"Cookies.binarycookies"]) isEqualToString:@"COOKIE_RESTORED"],@"Cookies restored after reinstall");
+            NSLog(@"Fresh-install v2 recovery passed.");
+        } else if(strcmp(argv[1],"prepare")==0 ||
            strcmp(argv[1],"prepare-interruption")==0 ||
            strcmp(argv[1],"prepare-rollback")==0) {
             check(PDStorageBootstrap()==PDStorageStateRecovered,@"bootstrap new sandbox for v2");
             put([home stringByAppendingPathComponent:@"Library/WebKit/localstorage.db"],@"WEB_OLD");
             put([home stringByAppendingPathComponent:@"Library/Cookies/Cookies.binarycookies"],@"COOKIE_OLD");
-            check(PDExperimentalRelocateWebKitAndCookies(home,root),@"mount two experimental scope links");
+            check(PDRelocateWebKitAndCookies(home,root),@"repeat scope mounting is idempotent");
             put([app stringByAppendingPathComponent:@"test.sqlite"],@"APP_OLD");
             NSString *unsupported=[home stringByAppendingPathComponent:@"unsupported.zip"];
             makeUnsupportedArchive(unsupported);

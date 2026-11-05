@@ -1,6 +1,6 @@
 # SideloadPersist — iOS 数据持久化 dylib（实验性）
 
-**v0.9 开发版：目录级持久化 + Apple 风格首次介绍页 / 恢复完成页 + 扩展存储范围诊断。** 主存储仍不依赖外部文件夹选择器，也不依赖证书的 Bundle ID 与 `application-identifier` 匹配。
+**v0.10 开发版：默认重定位 Application Support / WebKit / Cookies，并支持三目录 ZIP v2 冷启动恢复。** 不依赖测试 Bundle ID、Info.plist 开关、标记文件，也不依赖系统文件选择器授权。
 
 ## 运行机制
 
@@ -22,11 +22,11 @@ App 沙盒/
 
 原始路径可继续通过 Foundation、POSIX、SQLite、CoreData 等 API 访问，具体兼容性须用真机测试。源目录与目标目录都含有数据时，停止重定位，不自动合并/覆盖。迁移出错也不得删除原数据。
 
-**当前不会重定位**：`Library/Preferences`、`Library/Caches`、`Library/WebKit`、`tmp`、Keychain、App Groups。不能将这版当作“所有 App 数据已经备份”。
+**目前暂不重定位**：`Library/Preferences`、`Library/Caches`、`tmp`、Keychain、App Groups。请勿将目录级备份视为全部 App 数据的完整副本。
 
 ## 首次介绍页
 
-完成同步初始化后，等 App 存在一个有效前台 Scene，以 **仅一个自定义高度 detent 的 Sheet** 展示一次介绍页（iOS 16+ 约为可用高度的 84%，高度至少按 640pt 申请并由系统上限裁剪）；不允许向上扩大。iOS 15 回退为单一 large detent。为避免介绍内容被截断，介绍页已去掉内层 UIScrollView，使标题、路径和按钮同时可见。包含大标题、SF Symbols 图标、功能介绍、文件目录、项目仓库及作者入口、独立六步恢复指南（正常使用、签名过期、重新安装、恢复备份、大功告成、更多可能）和备份 ZIP 导入。六步指南使用单独的滚动视图，上下边缘由原生 `UIVisualEffectView` + 渐变透明遮罩呈现渐进模糊；「返回」按钮置于固定底部系统材质栏内，始终在安全区域上方，不随正文滚动。用户点击开始使用或向下关闭后，后续通常不再展示，也不驻留悬浮按钮或轮询监听。首次提示标记升级为 v3，使已体验旧版的测试 App 能重新看到新版 UI。如果已经完成介绍的 App 后续在 `SideloadPersist/Inbox` 出现 ZIP，插件会在下一次前台激活时重新展示导入入口；成功暂存后将这个 ZIP 移入 `Inbox/Imported/` 保留，以避免每次启动反复提示。
+完成同步初始化后，等 App 存在一个有效前台 Scene，以 **仅一个自定义高度 detent 的 Sheet** 展示一次介绍页（iOS 16+ 约为可用高度的 84%，高度至少按 640pt 申请并由系统上限裁剪）；不允许向上扩大。iOS 15 回退为单一 large detent。为避免介绍内容被截断，介绍页已去掉内层 UIScrollView，使标题、路径和按钮同时可见。包含大标题、SF Symbols 图标、功能介绍、文件目录、项目仓库及作者入口、独立六步恢复指南（正常使用、签名过期、重新安装、恢复备份、大功告成、更多可能）和备份 ZIP 导入。六步指南使用独立滚动视图，上下边缘通过与系统背景色一致的渐变层柔和隐去内容，暗色模式不再出现灰色光带；「返回」按钮置于固定底部同色背景栏内，始终在安全区域上方，不随正文滚动。用户点击开始使用或向下关闭后，后续通常不再展示，也不驻留悬浮按钮或轮询监听。首次提示标记升级为 v3，使已体验旧版的测试 App 能重新看到新版 UI。如果已经完成介绍的 App 后续在 `SideloadPersist/Inbox` 出现 ZIP，插件会在下一次前台激活时重新展示导入入口；成功暂存后将这个 ZIP 移入 `Inbox/Imported/` 保留，以避免每次启动反复提示。
 
 成功导入 ZIP 后，界面先尝试从半屏过渡至 large detent，再进入不可手势关闭的全屏完成页面，显示绿色成功图标与「退出 App」按钮，防止在下次冷启动应用恢复前继续操作。**按钮由用户主动触发 `exit(0)`，iOS 不提供公开的自行重启 API，因此用户仍需手动再次打开 App。** 这种主动退出可能被系统视为不正常退出；在正式版中应评估更自然的 UX。恢复包在退出前已被完整校验并持久暂存。
 
@@ -57,7 +57,7 @@ ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP �
 - `Application Support/...`
 - 单层包装目录或直接包含 Application Support 的内容
 
-**导入不会即时覆盖正在运行的数据库。** ZIP 先做路径、安全类型、大小校验并解压到 `Incoming/UUID`；提交待恢复标记，完全退出并冷启动后才将旧目标文件夹移动到 `Backups/UUID`，再安装新目标。若中断，会尝试修复或保留原目录。当前仅导入 Application Support；不自动迁移 Preferences/Keychain。
+**导入不会即时覆盖正在运行的数据库。** v1 ZIP 继续恢复 Application Support；v2 ZIP 将 Application Support、WebKit、Cookies 作为同一事务暂存并在下一次冷启动恢复。原数据保留在 Backups，发生异常时尝试回滚；Preferences 和 Keychain 暂未覆盖。
 
 不要在 App 活跃写入 SQLite WAL 时压缩文件。恢复时仍需验证数据库完整性。导出到公开的 Documents 也可能暴露敏感账号数据，请谨慎保管。
 
@@ -66,7 +66,7 @@ ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP �
 GitHub Actions 自动生成（未签名）：
 
 - `SideloadPersist-ios-arm64-unsigned`：注入式 dylib；
-- `StorageProbe-unsigned-ipa`：测试 `NSFileManager`、`NSData`、`NSFileHandle`、POSIX `open/write/stat`、`stdio`、SQLite WAL、CoreData SQLite、NSUserDefaults；另加 **WebKit / Preferences 存储范围研究**按钮，枚举部分 Library 子目录是否存在、尝试 WKWebView `localStorage` 持久化。扩展测试默认不会搬移这些系统目录。**仅 StorageProbe 测试 IPA**（原始 Bundle ID 为 `com.ravelloh.storageprobe` 且存在 `SideloadPersistExperimentalWebKitRelocation=true`）提供额外的「实验：下次冷启动重定位 WebKit / Cookies」按钮。用户明确确认后，才会在 `Documents/SideloadPersist/enable-webkit-experiment.flag` 写入实验标记，下一次启动时由注入的 dylib 在程序主入口前尝试同时把 `Library/WebKit` 与 `Library/Cookies` 移到 `Documents/SideloadPersist/Data/` 并建立符号链接。**普通 App 不会被启用这个实验**。如果两个源与目标存在数据冲突，实验会整体拒绝；创建失败时尝试反向回滚。当前 ZIP 导入只会恢复 `Application Support`，**不会恢复实验性 WebKit/Cookies 数据**，因此不要在真实第三方 App 上使用、删除或重装带有实验数据的测试实例之前请手工保存整个 `SideloadPersist` 文件夹。`Preferences` 继续维持原样，避免未经验证修改 cfprefsd 管理的目录。
+- `StorageProbe-unsigned-ipa`：用于 Foundation、POSIX、SQLite、CoreData 及 WebKit/Preferences/Cookies 测试。`WebKit`、`Cookies` 与 `Application Support` 在任意已注入插件的 App 中自动重定位；测试 IPA 不再提供专门的实验开关。对于来源/目标冲突的路径，插件会停止迁移而非自动覆盖。
 
 增强的 StorageProbe 将分别输出 `PREFERENCES_COUNTER`、`WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 和 `WEBKIT_DATA_RECORDS`，并比较 `Library/WebKit`、`Library/Cookies`、`Library/Caches/com.apple.WebKit.Networking`、`Library/Preferences` 的文件数及大小（`SCOPE_FOOTPRINT phase=before/after`）。不输出用户文件名或网站域名。通过二次启动比较各类别是否持续增长，以确定后续真正需要纳入 ZIP 恢复的目录。目录大小统计只是时点采样；WebKit 网络进程可能异步刷新，不能直接用文件大小证明数据确实只保存在某个目录。
 - `PickerProbe-unsigned-ipa`：保留的文件选择器兼容性测试。
@@ -85,7 +85,7 @@ CI 另在 macOS 隔离 HOME 环境中验证原子迁移、符号链接路径读�
 
 本项目不会包含任何用户证书、私钥，不自动发布 Release。
 
-## 多目录恢复 v2（实验，未做真机跨安装验证）
+## 多目录恢复 v2（已开放给所有注入 App；仍需真机跨安装数据验收）
 
 旧版只包含 Application Support 的 ZIP 保持 v1 导入及冷启动恢复流程。备份 ZIP 如果包含 `SideloadPersist/Data/WebKit/` 或 `SideloadPersist/Data/Cookies/`，新的导入器将识别 v2：
 
@@ -100,14 +100,14 @@ SideloadPersist/
 
 导入前验证每个 ZIP 文件名、Unix 类型和大小；只提取白名单目录到 `Incoming/<id>/Data/`。不处理任意来源的符号链接、绝对路径或 `../`，忽略备份中的 `Inbox`、`Backups` 和 AppleDouble 元数据。预先持久化 `Incoming/<id>/restore-plan.json` 与 `restore-pending.txt`，仅在下次冷启动恢复。原有目录分别移到 `Backups/<id>/Data/`，全部成功才清除 pending。中途失败时保留暂存文件并尽力回滚；意外中断后会根据 target/stage/backup 的状态尝试恢复处理，如存在不确定状态则拒绝覆盖。备份目录永不自动清理。
 
-**安全限制**：v2 的 WebKit/Cookies 恢复目前只对明确启用实验的 StorageProbe 开放，普通 App 如果尝试导入这些扩展目录会收到错误，而不是被静默忽略。`Preferences`、`Keychain` 和 Caches 仍不自动迁移。用户通过文件 App 做整个目录 ZIP 备份时，应当在 App 已退出、WebKit 进程写入已结束后压缩，以减少 SQLite/WAL 不一致的风险。此实验未证明真实 App 的跨安装 WebKit 数据（尤其 Cookie 身份信息）一定可以恢复。
+**v2 的可用范围**：三目录恢复对所有注入插件的 App 开放，不再检查 App 身份或手动标记。ZIP 路径、数据目录冲突、事务回滚和备份完整性校验保留。`Preferences`、Keychain 和 Caches 仍不自动迁移。
 
 **v2 清单完整性检查**：当 ZIP 内含 `SideloadPersist/manifest.json` 且其 `format=SideloadPersist.Directory.V2` 时，导入器会校验其中 `scopes` 与实际出现的 `Data/*` 目录一致。如果声明包含 Cookies，但 ZIP 丢失该目录，则整体拒绝导入。外部 ZIP 在 `Data/` 下出现尚不支持的目录（例如 Preferences）时也会明确拒绝，避免只恢复一部分数据。当前只保证 ZIP 提取 CRC 完整性；压缩时如果数据库仍在写入，CRC 正确不意味着 SQLite 事务一致，压缩前应停止 App 活动。
 
 ### StorageProbe v2 实机跨安装验收步骤
 
-1. **先保留现有测试数据**：StorageProbe 安装新版 dylib 并启用 WebKit/Cookies 实验后，运行「研究 WebKit / Preferences 存储范围」，记录 `WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 的 `after` 值，确认 `EXPERIMENT_LINK WebKit=yes`、`EXPERIMENT_LINK Cookies=yes`。完全结束测试 App，再在「文件」App 中压缩完整的 `SideloadPersist` 文件夹并将 ZIP 转存到 App 文件夹外。
-2. 备份明确安全后，删除 StorageProbe，重新安装同一测试 IPA 与新版 dylib，启动并点击「实验：下次冷启动重定位 WebKit / Cookies」，结束进程再打开一次。此时先检查 `EXPERIMENT_LINK` 两项均为 `yes`。如果数据目录有冲突，不要继续导入。
+1. **备份测试数据**：运行 StorageProbe 的存储 API 与 WebKit 诊断，记录 `WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 的 `after` 值，确认两个 `EXPERIMENT_LINK`（历史日志字段）均为 `yes`。完全结束 App，将 `SideloadPersist` 压缩并保存到 App 文件夹之外。
+2. **重新安装**：确认 ZIP 已安全保存，删除并重新安装测试 IPA，注入当前 dylib。首次启动即自动重定位三个目录，无需再次启用或冷启动实验模式。确认 WebKit/Cookies 符号链接存在。
 3. 在「文件」App 中把备份 ZIP 放到新 StorageProbe 的 `SideloadPersist/Inbox`（或使用可用的系统文件选择器），启动导入，完成校验后按提示结束进程，重新打开 App。
 4. 点击「研究 WebKit / Preferences 存储范围」，确认 `RESTORE_V2_LAST result=committed scopes=(Application Support, WebKit, Cookies)`，并且三个 WebKit 存储计数的 `before` 值与备份前的 `after` 值对应，再观察它们递增。`PERSISTENCE_MANIFEST` 应为 `SideloadPersist.Directory.V2`。
 

@@ -32,7 +32,7 @@ static BOOL PDCreateDirectory(NSString *path) {
 }
 // For the two experimental paths only, inspect both before mutating either.
 // Abort on conflicting/non-directory targets instead of attempting a merge.
-BOOL PDExperimentalRelocateWebKitAndCookies(NSString *home,NSString *root) {
+BOOL PDRelocateWebKitAndCookies(NSString *home,NSString *root) {
     NSArray<NSString *> *names=@[@"WebKit",@"Cookies"];
     NSMutableArray<NSMutableDictionary *> *plans=[NSMutableArray array];
     for(NSString *name in names) {
@@ -89,7 +89,7 @@ BOOL PDExperimentalRelocateWebKitAndCookies(NSString *home,NSString *root) {
         plan[@"linkedNow"]=@YES;
         if(!PDIsOurLink(source,target)) goto rollback;
     }
-    PDStorageTrace(@"EXPERIMENT: WebKit + Cookies relocated as verified symlinks (StorageProbe only)");
+    PDStorageTrace(@"WebKit + Cookies relocated as verified symlinks");
     return YES;
 rollback:
     PDStorageTrace(@"EXPERIMENT: relocation failed (%s), attempting reverse rollback",strerror(errno));
@@ -109,15 +109,13 @@ rollback:
     }
     return NO;
 }
-void PDExperimentalTryFromStorageProbe(void) {
-    // Two explicit gates: (1) the disposable test IPA declares the experiment
-    // (2) the user requested it by placing a marker via StorageProbe's UI.
-    // Ordinary user apps are NEVER opted in by a random file alone.
-    if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.ravelloh.storageprobe"]) return;
-    if (![NSBundle.mainBundle.infoDictionary[@"SideloadPersistExperimentalWebKitRelocation"] boolValue]) return;
-    NSString *marker=[PDStorageRoot() stringByAppendingPathComponent:@"enable-webkit-experiment.flag"];
-    if (![NSFileManager.defaultManager fileExistsAtPath:marker]) return;
-    BOOL ok=PDExperimentalRelocateWebKitAndCookies(NSHomeDirectory(),PDStorageRoot());
+BOOL PDInitializeExtraScopes(void) {
+    // Every injected app gets the same directory-level relocation on startup.
+    // Do not gate the data path on a Bundle ID, Info.plist key or a marker that
+    // disappears after reinstalling the app.
+    NSString *home=[PDStorageDocuments() stringByDeletingLastPathComponent];
+    BOOL ok=PDRelocateWebKitAndCookies(home,PDStorageRoot());
     NSString *report=[PDStorageRoot() stringByAppendingPathComponent:@"webkit-experiment-result.txt"];
-    [((ok ? @"ready" : @"failed") ) writeToFile:report atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [(ok ? @"ready" : @"failed") writeToFile:report atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    return ok;
 }

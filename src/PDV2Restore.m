@@ -117,11 +117,6 @@ BOOL PDV2ApplyPendingRestore(NSString *identifier) {
            [unique containsObject:scope]) return NO;
         [unique addObject:scope];
     }
-    BOOL extra=[unique containsObject:@"WebKit"] || [unique containsObject:@"Cookies"];
-    if(extra && !PDV2AllowsExtraScopes()) {
-        PDStorageTrace(@"V2 restore refused: extended scopes are not allowed for this app");
-        return NO;
-    }
     NSString *stageRoot=[stageDir stringByAppendingPathComponent:@"Data"];
     NSString *backupRoot=[[[root stringByAppendingPathComponent:@"Backups"]
                            stringByAppendingPathComponent:identifier] stringByAppendingPathComponent:@"Data"];
