@@ -254,6 +254,41 @@ BOOL PDPreferencesQuarantineUnmanagedDomains(NSUInteger *count,NSError **error) 
         return YES;
     }
 }
+static BOOL s_integrityFailure=NO;
+static NSString *PDPreferencesIntegrityMarker(void) {
+    return [PDStorageRoot() stringByAppendingPathComponent:@"preferences-integrity-warning.json"];
+}
+void PDPreferencesMarkIntegrityFailure(NSString *operation) {
+    @synchronized(PDPreferencesGuard()) {
+        s_integrityFailure=YES;
+        // No values, file paths or credential-like keys appear in this report.
+        NSDictionary *message=@{
+            @"format":@"SideloadPersist.IntegrityWarning.V1",
+            @"reason":@"managed-preferences-write-failed",
+            @"operation":operation ?: @"unknown",
+            @"backupSafe":@NO,
+            @"createdAt":@([[NSDate date] timeIntervalSince1970])
+        };
+        NSData *data=[NSJSONSerialization dataWithJSONObject:message
+                        options:NSJSONWritingPrettyPrinted error:nil];
+        NSError *error=nil;
+        if(!data || ![data writeToFile:PDPreferencesIntegrityMarker()
+                 options:NSDataWritingAtomic error:&error])
+            NSLog(@"[SideloadPersist Preferences] CRITICAL: unable to persist integrity warning: %@",error);
+        NSLog(@"[SideloadPersist Preferences] CRITICAL: backup may be stale after %@ failure",
+              operation ?: @"unknown");
+    }
+}
+BOOL PDPreferencesIntegrityOK(void) {
+    @synchronized(PDPreferencesGuard()) {
+        return !s_integrityFailure &&
+           ![NSFileManager.defaultManager fileExistsAtPath:PDPreferencesIntegrityMarker()];
+    }
+}
+NSString *PDPreferencesIntegrityWarning(void) {
+    return PDPreferencesIntegrityOK() ? nil :
+       @"偏好数据写入曾失败，备份可能不完整；请勿卸载 App。请保存原始数据并检查故障日志。";
+}
 NSDictionary *PDPreferencesHealth(void) {
     NSString *root=PDPreferencesRoot();
     NSArray *files=[NSFileManager.defaultManager contentsOfDirectoryAtPath:root error:nil] ?: @[];
