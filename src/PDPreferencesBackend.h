@@ -13,5 +13,11 @@ FOUNDATION_EXPORT BOOL PDPreferencesWriteValue(NSString *domain, NSString *key, 
 FOUNDATION_EXPORT BOOL PDPreferencesReplaceDomain(NSString *domain, NSDictionary *values, NSError **error);
 FOUNDATION_EXPORT BOOL PDPreferencesRemoveDomain(NSString *domain, NSError **error);
 FOUNDATION_EXPORT BOOL PDPreferencesDomainExists(NSString *domain);
+// Only app-owned preference domains can be backed up; system/framework domains
+// and absolute filesystem-style domain names always stay native.
+FOUNDATION_EXPORT BOOL PDPreferencesShouldManageDomain(NSString *domain);
+// Non-destructively move legacy system-domain copies out of exported Documents.
+// On failure, callers must not advertise Preferences as fully managed.
+FOUNDATION_EXPORT BOOL PDPreferencesQuarantineUnmanagedDomains(NSUInteger *count, NSError **error);
 FOUNDATION_EXPORT NSDictionary *PDPreferencesHealth(void);
 FOUNDATION_EXPORT BOOL PDPreferencesValidateDirectory(NSString *directory, NSString **reason);
