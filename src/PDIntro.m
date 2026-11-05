@@ -58,8 +58,22 @@ static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGrou
             controller.modalPresentationStyle = UIModalPresentationPageSheet;
             if (@available(iOS 15.0, *)) {
                 UISheetPresentationController *sheet = controller.sheetPresentationController;
-                sheet.detents = @[[UISheetPresentationControllerDetent mediumDetent]];
-                sheet.selectedDetentIdentifier = UISheetPresentationControllerDetentIdentifierMedium;
+                // One tall resting position: plenty of room without a nested
+                // scrolling region, and no second detent for upward expansion.
+                if (@available(iOS 16.0, *)) {
+                    UISheetPresentationControllerDetentIdentifier identifier = @"sideloadpersist.welcome";
+                    sheet.detents = @[[UISheetPresentationControllerDetent
+                        customDetentWithIdentifier:identifier
+                        resolver:^CGFloat(id<UISheetPresentationControllerDetentResolutionContext> context) {
+                            CGFloat maximum = context.maximumDetentValue;
+                            return MIN(maximum, MAX(640.0, maximum * 0.84));
+                        }]];
+                    sheet.selectedDetentIdentifier = identifier;
+                } else {
+                    // iOS 15 has no custom detents; use large rather than an
+                    // undersized medium sheet. Users can still dismiss downward.
+                    sheet.detents = @[[UISheetPresentationControllerDetent largeDetent]];
+                }
                 sheet.prefersGrabberVisible = YES;
                 sheet.prefersScrollingExpandsWhenScrolledToEdge = NO;
                 sheet.preferredCornerRadius = 28;
@@ -194,23 +208,17 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     ]];
     [stack insertArrangedSubview:iconRow atIndex:0];
 
-    UIScrollView *scroll=[UIScrollView new];
-    scroll.translatesAutoresizingMaskIntoConstraints=NO;
-    scroll.alwaysBounceVertical=YES;
-    [self.view addSubview:scroll];
+    // Deliberately no UIScrollView in the onboarding sheet. Adapt the sheet
+    // height to fit the entire content and keep all buttons simultaneously visible.
     stack.translatesAutoresizingMaskIntoConstraints=NO;
-    [scroll addSubview:stack];
+    [self.view addSubview:stack];
     UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
-        [scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],
-        [scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
-        [scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
-        [scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:22],
-        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],
-        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:22],
-        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-22],
-        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-44],
+        [stack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:22],
+        [stack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-22],
+        [stack.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor],
+        [stack.topAnchor constraintGreaterThanOrEqualToAnchor:safe.topAnchor constant:18],
+        [stack.bottomAnchor constraintLessThanOrEqualToAnchor:safe.bottomAnchor constant:-18]
     ]];
     self.bodyContainer=stack;
 }
@@ -250,18 +258,23 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     UIViewController *guide=[UIViewController new];
     guide.view.backgroundColor=UIColor.systemBackgroundColor;
     UILabel *title=PDLabel(@"数据如何保留与恢复",28,UIFontWeightBold,UIColor.labelColor);
-    UILabel *lead=PDLabel(@"SideloadPersist 将受支持的数据保存到当前 App 可通过「文件」访问的目录。删除应用前务必备份。",15,UIFontWeightRegular,UIColor.secondaryLabelColor);
+    UILabel *lead=PDLabel(@"只需一次备份，便可以在更换签名后继续使用已保存的数据。",15,UIFontWeightRegular,UIColor.secondaryLabelColor);
     NSMutableArray *views=[NSMutableArray arrayWithObjects:title,lead,nil];
-    NSArray *heads=@[@"正常使用",@"签名过期时",@"重新安装",@"恢复备份"];
+    NSString *appName=NSBundle.mainBundle.infoDictionary[@"CFBundleDisplayName"] ?:
+                      NSBundle.mainBundle.infoDictionary[@"CFBundleName"] ?: @"当前 App";
+    NSString *appFolder=[NSString stringWithFormat:@"在我的 iPhone › %@",appName];
+    NSArray *heads=@[@"正常使用",@"签名过期时",@"重新安装",@"恢复备份",@"大功告成！",@"更多可能…"];
     NSArray *details=@[
-        @"无需操作，插件会静默使用持久化目录。",
-        @"应用仍安装时，前往「文件」App，把 SideloadPersist 文件夹完整复制到安全位置。",
-        @"重签名并安装 App，打开一次完成初始化。删除旧 App 前必须确认备份已在 App 外。",
-        @"通过首页导入备份 ZIP（或复制到 Inbox），等待校验完成。按提示关闭并重新打开 App，冷启动时完成恢复。"];
+        @"无需任何操作，插件会自动将应用中受支持的私有数据转移到可访问的持久化目录。",
+        [NSString stringWithFormat:@"先不要卸载 App。打开「文件」App，前往「%@」，压缩「SideloadPersist」文件夹，再将 ZIP 转存到这个 App 文件夹之外的安全位置。",appFolder],
+        [NSString stringWithFormat:@"现在可以删除并重新安装 App。删除前，请确认刚保存的 ZIP 确实位于「%@」文件夹之外，例如 iCloud Drive。",appFolder],
+        @"打开 App，选择「导入备份 ZIP」，待校验完成后按提示退出，再手动打开 App 完成恢复。",
+        @"您备份的应用数据已完成迁移——妥善保存备份，以后不必再担心签名过期导致这些数据丢失。",
+        @"在 App 关闭的情况下，您可以通过「SideloadPersist」直接读写已经迁出的应用私有数据，无需越狱。更多的可能性等您来发现！"];
     for(NSUInteger i=0;i<heads.count;i++){
-        UILabel *number=PDLabel([NSString stringWithFormat:@"%lu", (unsigned long)(i+1)],48,UIFontWeightBold,[PDAccent() colorWithAlphaComponent:0.55]);
-        [number.widthAnchor constraintEqualToConstant:52].active=YES;
-        UILabel *header=PDLabel(heads[i],18,UIFontWeightSemibold,UIColor.labelColor);
+        UILabel *number=PDLabel([NSString stringWithFormat:@"%lu", (unsigned long)(i+1)],54,UIFontWeightBold,[PDAccent() colorWithAlphaComponent:0.55]);
+        [number.widthAnchor constraintEqualToConstant:60].active=YES;
+        UILabel *header=PDLabel(heads[i],19,UIFontWeightSemibold,UIColor.labelColor);
         UILabel *detail=PDLabel(details[i],14,UIFontWeightRegular,UIColor.secondaryLabelColor);
         UIStackView *text=[[UIStackView alloc] initWithArrangedSubviews:@[header,detail]];
         text.axis=UILayoutConstraintAxisVertical; text.spacing=4;
@@ -270,6 +283,8 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
         row.spacing=12;
         [views addObject:row];
     }
+    UILabel *footnote=PDLabel(@"目前仅自动重定位 Application Support 等已支持的数据；Preferences、Keychain、WebKit 等仍在研究中。删除 App 前务必确认备份已放在 App 目录外。",12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
+    [views addObject:footnote];
     UIButton *finish=PDButton(@"返回",YES);
     [finish addTarget:self action:@selector(closeGuide) forControlEvents:UIControlEventTouchUpInside];
     [views addObject:finish];
