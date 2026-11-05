@@ -70,7 +70,45 @@ int main(int argc,char **argv) {
         NSString *prefsDir=[data stringByAppendingPathComponent:@"Preferences"];
         NSString *pending=[root stringByAppendingPathComponent:@"restore-pending.txt"];
         NSFileManager *fm=NSFileManager.defaultManager;
-        if(strcmp(argv[1],"prepare-conflict")==0) {
+        if(strcmp(argv[1],"prepare-empty-target")==0) {
+            NSString *prefSource=[home stringByAppendingPathComponent:@"Library/Preferences/current.plist"];
+            put(prefSource,@"PREF_ORIGINAL");
+            check([fm createDirectoryAtPath:prefsDir withIntermediateDirectories:YES attributes:nil error:nil],
+                  @"pre-existing empty target directory");
+            check(PDStorageBootstrap()==PDStorageStateRecovered,
+                  @"nonempty original and empty target are merged by atomic rename");
+            struct stat st={0};
+            check(lstat([home stringByAppendingPathComponent:@"Library/Preferences"].fileSystemRepresentation,&st)==0 &&
+                  S_ISLNK(st.st_mode),@"Preferences now a verified symlink");
+            check([readFile([prefsDir stringByAppendingPathComponent:@"current.plist"])
+                  isEqualToString:@"PREF_ORIGINAL"],@"original Preferences content preserved");
+            NSDictionary *manifest=[NSJSONSerialization JSONObjectWithData:
+                  [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"manifest.json"]]
+                  options:0 error:nil];
+            check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V3"],
+                  @"V3 manifest after successful empty-target migration");
+        } else if(strcmp(argv[1],"prepare-foreign-link")==0) {
+            NSString *foreign=[home stringByAppendingPathComponent:@"Library/PreferencesOld"];
+            put([foreign stringByAppendingPathComponent:@"original.plist"],@"PREF_EXTERNAL_LINK");
+            NSString *link=[home stringByAppendingPathComponent:@"Library/Preferences"];
+            check(symlink(foreign.fileSystemRepresentation,link.fileSystemRepresentation)==0,
+                  @"simulate system-owned Preferences symlink");
+            check(PDStorageBootstrap()==PDStorageStateRecovered,
+                  @"foreign Preferences link does not prevent core bootstrap");
+            check([readFile([link stringByAppendingPathComponent:@"original.plist"])
+                  isEqualToString:@"PREF_EXTERNAL_LINK"],
+                  @"foreign link data intact");
+            NSDictionary *diag=[NSJSONSerialization JSONObjectWithData:
+                  [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"scope-mapping-result.json"]]
+                  options:0 error:nil];
+            BOOL found=NO;
+            for(NSDictionary *entry in diag[@"scopes"]) {
+                if([entry[@"scope"] isEqualToString:@"Preferences"] &&
+                   [entry[@"reason"] isEqualToString:@"source-is-foreign-or-broken-symlink"])
+                    found=YES;
+            }
+            check(found,@"diagnostic identifies foreign Preferences symlink");
+        } else if(strcmp(argv[1],"prepare-conflict")==0) {
             // Reproduce the exact regression: Preferences has an incompatible
             // pre-existing source and target, but other scopes are mountable.
             NSString *original=[home stringByAppendingPathComponent:@"Library/Preferences/user.plist"];

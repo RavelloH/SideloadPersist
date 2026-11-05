@@ -150,3 +150,15 @@ v2/v3 成功恢复后生成 `SideloadPersist/restore-last.json` 收据，记录�
 因为 NSUserDefaults / CFPreferences 可能由 `cfprefsd` 异步缓存和写盘，SideloadPersist 在 UIApplication 进入后台、正常终止的通知中请求 `standardUserDefaults synchronize` 和 `CFPreferencesAppSynchronize`，尽力增加备份前 Preferences 内容落盘的机会。但这**不能保证所有 Suite 或系统服务数据立刻一致**，更不能替代「完全退出 App 后再压缩整个文件夹」。请特别留意 v3 真机综合测试中的 `RESTORE_COMPARE userDefaults`、`RESTORE_COMPARE defaultsSuite` 与 `RESTORE_COMPARE cfPreferences`，它们验证的不是目录符号链接而是真实 API 读值。
 
 综合测试 v2 在同一次点击中增加 `LIBRARY_DISCOVERY`（Library 顶层自建目录与未知目录分类）、测试用自建 `Library/StorageProbeCustomPersistent` 和 `NSHTTPCookieStorage` 的持久 Cookie 样本。新增的 `RESEARCH_REINSTALL` 仅用于观察，不计入正式的恢复 PASS/FAIL，以便在同一次跨安装实测里筛选下一批目录，不因为尚未覆盖的数据类别阻断综合基线。
+
+## v0.11.1 修复：扩展目录冲突不再阻断 Application Support
+
+实机发现 v3 原实现会将 WebKit、Cookies、Preferences 三个可选目录视为同一组全有或全无的前置条件：任一目录存在冲突，插件在核心 Application Support 初始化之前就返回。由此产生 `manifest.json` / 自动 README 缺失和所有 symlink 不存在的情况；StorageProbe 虽能直接写入 Documents/Data，但不代表数据真的被原应用路径使用。此问题已通过独立目录迁移修复。
+
+每个可选目录现在独立检查、迁移及回滚；对源和目标都非空的数据严格保持原样，绝不自动覆盖或删除，其他可迁移目录与核心 Application Support 继续运行。对于目标原本是**空文件夹**但源目录有数据的情况，可删除空目标、原子移动原目录，再建立符号链接，失败时尝试恢复原状。对于已有外来符号链接、目录类型不符等情况不操作该目录。
+
+每次启动会创建 `Documents/SideloadPersist/scope-mapping-result.json`，记录各扩展目录的 `mapped`、`reason`、路径类型和直接子项数量（不列出文件名、不读私有文件内容）；同时 `scope-mapping-result.txt` 为 `ready` 或 `partial`。`manifest.json` 和自动 README **只列入真实验证的映射**；如果某个目录没成功映射，README 会明确标注未建立映射。部分扩展目录失效不意味着全部 App 数据都被持久化；在研究阶段应先查清原因再备份。
+
+一键综合测试同时修复了误导性通过信号：没有清单、README、原路径映射，或恢复比较出错时，输出 `BACKUP_NOT_READY` / `BACKUP_ABORTED`，诊断保存在 `fullcycle-diagnostics.json`，**不会**生成新的有效备份基线，也不会再输出 `BACKUP_BASELINE_READY`。只有 `fail=0` 且报告写入成功才允许开始备份。单个数据文件能直接从 Documents 读写不再被用作映射成功的证据。
+
+新增加三类模拟回归：**非空源与非空目标冲突**（继续恢复 Application Support/WebKit/Cookies 并保持 Preferences 双份原样）、**非空源与空目标**（自动迁移、保留数据）、**系统或其他软件创建的外来 Preferences 符号链接**（保留链接，正常启动其他范围）。尚不能从目前的用户日志推断 iOS 27 上冲突的确切底层原因；新版诊断会给出对应 scope 和 reason。
