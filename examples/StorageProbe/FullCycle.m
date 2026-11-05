@@ -291,6 +291,20 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSString *value=old ?: NSUUID.UUID.UUIDString;
     BOOL wrote=[value writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
     [self check:wrote label:@"Library custom directory synthetic marker writable"];
+    NSArray *configured=NSBundle.mainBundle.infoDictionary[@"SideloadPersistAdditionalLibraryScopes"];
+    [self check:[configured isKindOfClass:NSArray.class] &&
+                 [configured containsObject:@"ThirdPartyState"]
+         label:@"APP_PRIVATE_LIBRARY explicit directory declared by IPA Info.plist"];
+    NSString *third=[library stringByAppendingPathComponent:@"ThirdPartyState"];
+    [NSFileManager.defaultManager createDirectoryAtPath:third withIntermediateDirectories:YES
+        attributes:nil error:nil];
+    NSString *thirdMarker=[third stringByAppendingPathComponent:@"marker.txt"];
+    NSString *thirdBefore=[NSString stringWithContentsOfFile:thirdMarker
+        encoding:NSUTF8StringEncoding error:nil];
+    NSString *thirdValue=thirdBefore ?: NSUUID.UUID.UUIDString;
+    [self check:[thirdValue writeToFile:thirdMarker atomically:YES
+        encoding:NSUTF8StringEncoding error:nil]
+        label:@"APP_PRIVATE_LIBRARY third-party neutral-name marker writable"];
     // This private subdirectory was just created during the probe, after the
     // plugin's early bootstrap. Rescan once so the same expensive reinstall
     // checks both fresh discovery and the restored original Library path.
@@ -302,6 +316,13 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     ssize_t length=readlink(probeCustom.fileSystemRepresentation,linkDestination,sizeof(linkDestination)-1);
     BOOL customMapped=length>0 && [backup isEqualToString:[NSString stringWithUTF8String:linkDestination]];
     [self check:customMapped label:@"APP_PRIVATE_LIBRARY StorageProbeCustomPersistent mapped to existing AppSupport backup"];
+    NSString *thirdBackup=[[self.root stringByAppendingPathComponent:
+        @"Data/Application Support/SideloadPersist.Library"] stringByAppendingPathComponent:@"ThirdPartyState"];
+    char thirdDestination[4096]={0};
+    ssize_t thirdLength=readlink(third.fileSystemRepresentation,thirdDestination,sizeof(thirdDestination)-1);
+    BOOL thirdMapped=thirdLength>0 && [thirdBackup isEqualToString:
+        [NSString stringWithUTF8String:thirdDestination]];
+    [self check:thirdMapped label:@"APP_PRIVATE_LIBRARY neutral-name directory explicitly mapped"];
     NSDictionary *manifest=SPJSON([self.root stringByAppendingPathComponent:@"manifest.json"]);
     BOOL declared=NO;
     for(NSDictionary *mapping in manifest[@"additionalLibraryMappings"]) {
@@ -310,11 +331,24 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
                @"Data/Application Support/SideloadPersist.Library/StorageProbeCustomPersistent"]) declared=YES;
     }
     [self check:declared label:@"APP_PRIVATE_LIBRARY mapping recorded in manifest"];
+    BOOL thirdDeclared=NO;
+    for(NSDictionary *mapping in manifest[@"additionalLibraryMappings"])
+        if([mapping[@"source"] isEqualToString:@"Library/ThirdPartyState"] &&
+           [mapping[@"target"] isEqualToString:
+             @"Data/Application Support/SideloadPersist.Library/ThirdPartyState"])
+            thirdDeclared=YES;
+    [self check:thirdDeclared label:@"APP_PRIVATE_LIBRARY neutral-name mapping present in manifest"];
     NSString *persisted=[NSString stringWithContentsOfFile:
         [backup stringByAppendingPathComponent:@"marker.txt"] encoding:NSUTF8StringEncoding error:nil];
     [self check:[persisted isEqualToString:value] label:@"APP_PRIVATE_LIBRARY original marker resides inside backup scope"];
+    NSString *thirdPersisted=[NSString stringWithContentsOfFile:
+        [thirdBackup stringByAppendingPathComponent:@"marker.txt"] encoding:NSUTF8StringEncoding error:nil];
+    [self check:[thirdPersisted isEqualToString:thirdValue]
+        label:@"APP_PRIVATE_LIBRARY third-party marker included in backup scope"];
     [self researchMetric:@"customLibraryMarker" before:old after:value];
     if(self.verifying && customMapped) [self compare:@"customLibraryMarker" actual:old];
+    [self researchMetric:@"explicitLibraryMarker" before:thirdBefore after:thirdValue];
+    if(self.verifying && thirdMapped) [self compare:@"explicitLibraryMarker" actual:thirdBefore];
     NSDictionary *discovery=SPJSON([self.root stringByAppendingPathComponent:@"library-discovery.json"]);
     [self line:[NSString stringWithFormat:@"LIBRARY_MIGRATION_DIAGNOSTIC mapped=%@ conflicts=%@ unselected=%@",
         discovery[@"mapped"] ?: @[],discovery[@"conflicts"] ?: @"unknown",
