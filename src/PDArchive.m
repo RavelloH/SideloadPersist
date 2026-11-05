@@ -91,6 +91,10 @@ NSString *PDArchiveStageZIPWithIdentityApproval(NSURL *zipURL,
         PDImportError(error,2,@"已有等待恢复的数据包，请先完全退出并重新启动 App");
         return nil;
     }
+    if(PDV2ZIPHasIntegrityWarning(zipURL)) {
+        PDImportError(error,14,@"此 ZIP 包含 Preferences 写入故障标记，可能缺少最新数据；请勿将其作为可用的恢复备份");
+        return nil;
+    }
     NSString *sourceBundle=nil;
     PDArchiveIdentityState identity=PDArchiveInspectIdentity(zipURL,&sourceBundle);
     if(identity==PDArchiveIdentityStateInvalid) {
