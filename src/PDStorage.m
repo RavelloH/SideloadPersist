@@ -1,4 +1,5 @@
 #import "PDStorage.h"
+#import "PDExperimentalScope.h"
 #import <sys/stat.h>
 #import <unistd.h>
 #import <errno.h>
@@ -168,6 +169,7 @@ PDStorageState PDStorageBootstrap(void) {
         if (PDLinkMatches(source,target)) {
             PDWriteManifest();
             PDSetStatus(PDStorageStateReady,@"目录映射已存在");
+            PDExperimentalTryFromStorageProbe();
             return s_state;
         }
         struct stat src={0},dst={0};
@@ -228,6 +230,7 @@ PDStorageState PDStorageBootstrap(void) {
         }
         PDWriteManifest();
         PDSetStatus(PDStorageStateRecovered,@"持久化目录已建立并验证");
+        PDExperimentalTryFromStorageProbe();
         return s_state;
     }
 }

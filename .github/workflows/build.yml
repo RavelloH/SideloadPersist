@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES \
             -framework Foundation -Isrc -Ivendor/miniz \
-            tests/StorageSmoke.m src/PDStorage.m src/PDArchive.m \
+            tests/StorageSmoke.m src/PDStorage.m src/PDExperimentalScope.m src/PDArchive.m \
             vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
             -o /tmp/pd-storage-smoke
           TEST_HOME="$(mktemp -d)"
@@ -46,6 +46,8 @@ jobs:
           BARE_HOME="$(mktemp -d)"
           HOME="$BARE_HOME" /tmp/pd-storage-smoke prepare-bare
           HOME="$BARE_HOME" /tmp/pd-storage-smoke apply-bare
+          EXPERIMENT_HOME="$(mktemp -d)"
+          HOME="$EXPERIMENT_HOME" /tmp/pd-storage-smoke experiment
       - name: Build independent unsigned PickerProbe IPA
         shell: bash
         run: |
