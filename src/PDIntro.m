@@ -332,7 +332,7 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     self.importButton.enabled=NO;
     self.statusLabel.text=@"正在验证并暂存备份…";
     // Prevent dismissal while data is still being extracted to a staging directory.
-    self.isModalInPresentation=YES;
+    self.modalInPresentation=YES;
     __weak typeof(self) weakSelf=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         NSError *error=nil;
@@ -347,7 +347,7 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
                 PDStorageTrace(@"Backup validated and staged; awaiting explicit process restart");
                 [strong presentCompletion];
             } else {
-                strong.isModalInPresentation=NO;
+                strong.modalInPresentation=NO;
                 strong.importButton.enabled=YES;
                 strong.statusLabel.text=@"导入失败，原数据未更改。";
                 [strong showMessage:@"无法导入" body:error.localizedDescription ?: @"备份校验失败。"];
@@ -358,7 +358,7 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
 - (void)presentCompletion {
     if(self.presentedViewController && ![self.presentedViewController isBeingDismissed]) return;
     self.committed=YES;
-    self.isModalInPresentation=YES;
+    self.modalInPresentation=YES;
     if(@available(iOS 15.0,*)) {
         UISheetPresentationController *sheet=self.sheetPresentationController;
         if(sheet) [sheet animateChanges:^{
@@ -369,7 +369,7 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     }
     PDCompleteController *screen=[PDCompleteController new];
     screen.modalPresentationStyle=UIModalPresentationFullScreen;
-    screen.isModalInPresentation=YES;
+    screen.modalInPresentation=YES;
     [self presentViewController:screen animated:YES completion:nil];
 }
 - (void)accept {
@@ -384,7 +384,7 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor=UIColor.systemBackgroundColor;
-    self.isModalInPresentation=YES;
+    self.modalInPresentation=YES;
     UIView *circle=[UIView new];
     circle.backgroundColor=[UIColor systemGreenColor];
     circle.layer.cornerRadius=49;
