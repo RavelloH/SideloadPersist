@@ -37,7 +37,8 @@ static void PDLogPreferenceError(NSString *action, NSString *domain, NSError *er
 static BOOL PDSetupDomain(NSString *domain, NSDictionary *initial) {
     NSError *error=nil;
     BOOL okay=PDPreferencesEnsureDomain(domain,initial,&error);
-    if(!okay) PDLogPreferenceError(@"初始化失败",domain,error);
+    if(!okay) {PDLogPreferenceError(@"初始化失败",domain,error);
+        PDPreferencesMarkIntegrityFailure(@"initialize-domain");}
     else @synchronized(s_domains) {[s_domains addObject:domain];}
     return okay;
 }
@@ -66,6 +67,7 @@ static void PDSet(id self,SEL selector,id value,NSString *key) {
     NSError *error=nil;
     if(!PDPreferencesWriteValue(domain,key,value,&error)) {
         PDLogPreferenceError(@"写入失败，回退原生 API",domain,error);
+        PDPreferencesMarkIntegrityFailure(@"set-value");
         originalSetObject(self,selector,value,key);
         return;
     }
@@ -77,6 +79,7 @@ static void PDRemove(id self,SEL selector,NSString *key) {
     NSError *error=nil;
     if(!PDPreferencesWriteValue(domain,key,nil,&error)) {
         PDLogPreferenceError(@"删除失败，回退原生 API",domain,error);
+        PDPreferencesMarkIntegrityFailure(@"remove-value");
         originalRemoveObject(self,selector,key);
         return;
     }
@@ -95,6 +98,7 @@ static void PDSetPersistentDomain(id self,SEL selector,NSDictionary *values,NSSt
     NSError *error=nil;
     if(!PDPreferencesReplaceDomain(name,values,&error)) {
         PDLogPreferenceError(@"批量替换失败，回退原生 API",name,error);
+        PDPreferencesMarkIntegrityFailure(@"replace-domain");
         originalSetPersistentDomain(self,selector,values,name);
     }
 }
@@ -103,6 +107,7 @@ static void PDRemovePersistentDomain(id self,SEL selector,NSString *name) {
     NSError *error=nil;
     if(!PDPreferencesRemoveDomain(name,&error)) {
         PDLogPreferenceError(@"移除偏好域失败，回退原生 API",name,error);
+        PDPreferencesMarkIntegrityFailure(@"remove-domain");
         originalRemovePersistentDomain(self,selector,name);
     }
 }
@@ -184,6 +189,7 @@ static void PDCFSetApp(CFStringRef key,CFPropertyListRef value,CFStringRef app) 
     if(!PDPreferencesWriteValue(PDAppDomain(),(__bridge NSString *)key,
                 (__bridge id)value,&error)) {
         PDLogPreferenceError(@"CFPreferencesSetAppValue failed",PDAppDomain(),error);
+        PDPreferencesMarkIntegrityFailure(@"cf-set-app");
         if(origCFSetApp)origCFSetApp(key,value,app);
     }
 }
@@ -213,6 +219,7 @@ static void PDCFSetValue(CFStringRef key,CFPropertyListRef value,CFStringRef app
     NSError *error=nil;
     if(!PDPreferencesWriteValue(PDAppDomain(),(__bridge NSString *)key,(__bridge id)value,&error)) {
         PDLogPreferenceError(@"CFPreferencesSetValue failed",PDAppDomain(),error);
+        PDPreferencesMarkIntegrityFailure(@"cf-set-domain");
         if(origCFSetValue) origCFSetValue(key,value,app,user,host);
     }
 }
@@ -230,6 +237,7 @@ BOOL PDPreferencesInstallHook(void) {
     NSError *quarantineError=nil;
     if(!PDPreferencesQuarantineUnmanagedDomains(&excluded,&quarantineError)) {
         s_status=@"隔离旧版系统偏好文件失败；未安装 Preferences Hook";
+        PDPreferencesMarkIntegrityFailure(@"quarantine-legacy-domain");
         NSLog(@"[SideloadPersist Preferences] %@: %@",s_status,quarantineError);
         return NO;
     }
