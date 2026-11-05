@@ -43,6 +43,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
 @property(nonatomic,copy) void (^completionBlock)(void);
 @property(nonatomic,strong) NSMutableDictionary *values;
 @property(nonatomic,strong) NSDictionary *baseline;
+@property(nonatomic,strong) NSSet<NSString *> *mappedScopes;
 @property(nonatomic,strong) NSString *installationID;
 @property(nonatomic,strong) NSString *root;
 @property(nonatomic,strong) NSString *snapshotPath;
@@ -96,7 +97,17 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     [self line:[NSString stringWithFormat:@"METRIC %@ before=%@ after=%@ scope=%@",
         key,before ?: @"missing",after ?: @"missing",migrated?@"migrated":@"native-local"]];
     if(after) self.values[key]=after;
-    if(migrated) [self compare:key actual:before];
+    if(migrated) {
+        NSString *scope=@"Application Support";
+        if([key isEqualToString:@"webCookie"]) scope=@"Cookies";
+        else if([key hasPrefix:@"web"]) scope=@"WebKit";
+        else if([key isEqualToString:@"userDefaults"] ||
+                [key isEqualToString:@"defaultsSuite"] ||
+                [key isEqualToString:@"cfPreferences"]) scope=@"Preferences";
+        if(![self.mappedScopes containsObject:scope]) {
+            [self line:[NSString stringWithFormat:@"NOT_PERSISTED %@: missing original Library/%@ symlink, direct Documents writes do not prove recovery",key,scope]];
+        } else [self compare:key actual:before];
+    }
     else if(self.verifying) {
         id expected=[self.baseline[@"values"] isKindOfClass:NSDictionary.class] ?
                      self.baseline[@"values"][key] : nil;
@@ -154,6 +165,17 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSDictionary *receipt=SPJSON([self.root stringByAppendingPathComponent:@"restore-last.json"]);
     [self line:[NSString stringWithFormat:@"PERSISTENCE_MANIFEST %@ scopes=%@",
         manifest[@"format"] ?: @"absent",manifest[@"scopes"] ?: @[]]];
+    [self check:([manifest[@"scopes"] isKindOfClass:NSArray.class] &&
+        [manifest[@"scopes"] containsObject:@"Application Support"])
+         label:@"PERSISTENCE_MANIFEST valid with verified core scope"];
+    NSDictionary *diagnostics=SPJSON([self.root stringByAppendingPathComponent:@"scope-mapping-result.json"]);
+    if([diagnostics[@"scopes"] isKindOfClass:NSArray.class]) {
+        for(NSDictionary *scope in diagnostics[@"scopes"]) {
+            [self line:[NSString stringWithFormat:@"SCOPE_DIAGNOSTIC %@ mapped=%@ reason=%@ source=%@ target=%@ sourceEntries=%@ targetEntries=%@",
+                scope[@"scope"],scope[@"mapped"],scope[@"reason"],scope[@"sourceType"],
+                scope[@"targetType"],scope[@"sourceEntryCount"],scope[@"targetEntryCount"]]];
+        }
+    } else [self line:@"SCOPE_DIAGNOSTIC absent (older dylib or init stopped early)"];
     for(NSString *name in @[@"Preferences",@"Caches",@"tmp"]) {
         NSString *path=[name isEqualToString:@"tmp"] ? NSTemporaryDirectory() :
             [home stringByAppendingPathComponent:[@"Library" stringByAppendingPathComponent:name]];
@@ -172,6 +194,7 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
                  [readme containsString:@"Library/Preferences"])
          label:@"SideloadPersist README.md created with author repository and directory mappings"];
     [self enumerateLibraryScopeCandidates];
+    NSMutableSet<NSString *> *verified=[NSMutableSet set];
     for(NSString *scope in @[@"Application Support",@"WebKit",@"Cookies",@"Preferences"]) {
         NSString *original=[home stringByAppendingPathComponent:
             [@"Library" stringByAppendingPathComponent:scope]];
@@ -181,7 +204,9 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         ssize_t len=readlink(original.fileSystemRepresentation,buffer,sizeof(buffer)-1);
         BOOL matching=len>0 && [destination isEqualToString:[NSString stringWithUTF8String:buffer]];
         [self check:matching label:[NSString stringWithFormat:@"SCOPE_LINK %@",scope]];
+        if(matching) [verified addObject:scope];
     }
+    self.mappedScopes=[verified copy];
     if(self.verifying)
         [self check:[receipt[@"result"] isEqualToString:@"committed"]
              label:@"RESTORE_RECEIPT committed after reinstall"];
@@ -637,21 +662,30 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     NSData *bytes=[NSJSONSerialization dataWithJSONObject:snapshot
                                                 options:NSJSONWritingPrettyPrinted error:nil];
     if(bytes) {
+        // Never overwrite a valid backup baseline with observations from a
+        // broken initialization. A partial diagnostic is not a backup baseline.
         NSString *path=self.verifying ?
-            [self.root stringByAppendingPathComponent:@"fullcycle-verification.json"] : self.snapshotPath;
+            [self.root stringByAppendingPathComponent:@"fullcycle-verification.json"] :
+            (valid ? self.snapshotPath : [self.root stringByAppendingPathComponent:@"fullcycle-diagnostics.json"]);
         NSError *error=nil;
         BOOL saved=[bytes writeToFile:path options:NSDataWritingAtomic error:&error];
         [self check:saved label:[NSString stringWithFormat:@"SAVE_REPORT %@",
-                     self.verifying?@"fullcycle-verification.json":@"fullcycle-baseline.json"]];
+                     self.verifying?@"fullcycle-verification.json":
+                     (valid?@"fullcycle-baseline.json":@"fullcycle-diagnostics.json")]];
+        valid=valid && saved;
     } else {
         [self line:@"INCOMPLETE: report serialization failed; no baseline saved"];
     }
-    if(!valid) [self line:@"WARNING: PARTIAL test results were saved. Missing/failed checks must be examined before relying on this backup."];
+    if(!valid) [self line:@"BACKUP_NOT_READY: initialization or data checks failed; diagnostic only. DO NOT delete/reinstall this App based on this run."];
     [self line:[NSString stringWithFormat:@"FULL_CYCLE_SUMMARY phase=%@ pass=%lu fail=%lu skip=%lu",
         phase,(unsigned long)self.passes,(unsigned long)self.failures,(unsigned long)self.skips]];
-    [self line:self.verifying ?
-        @"RESTORE_TEST_FINISHED: compare PASS/FAIL; keep backup ZIP until satisfied." :
-        @"BACKUP_BASELINE_READY: fully quit the App, archive the entire SideloadPersist folder, copy the ZIP OUTSIDE this App, reinstall, import ZIP, relaunch, then press the SAME button."];
+    if(self.verifying)
+        [self line:valid?@"RESTORE_VERIFIED: all checks passed; keep ZIP until satisfied." :
+                    @"RESTORE_NOT_VERIFIED: some checks failed; retain ZIP, do not trust this restore."];
+    else if(valid)
+        [self line:@"BACKUP_BASELINE_READY: fully quit App, archive SideloadPersist to a safe location outside this App, reinstall and import ZIP, then run this test again."];
+    else
+        [self line:@"BACKUP_ABORTED: no valid baseline generated. Check scope-mapping-result.json and retry after fixing initialization."];
     [self.webView removeFromSuperview];
     self.webView=nil;
     if(self.completionBlock) self.completionBlock();

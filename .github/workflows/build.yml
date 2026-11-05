@@ -58,6 +58,9 @@ jobs:
             src/PDArchive.m src/PDV2Archive.m src/PDV2Restore.m \
             vendor/miniz/miniz.c vendor/miniz/miniz_tdef.c vendor/miniz/miniz_tinfl.c vendor/miniz/miniz_zip.c \
             -o /tmp/pd-v2-storage-smoke
+          CONFLICT_HOME="$(mktemp -d)"
+          HOME="$CONFLICT_HOME" /tmp/pd-v2-storage-smoke prepare-conflict
+          HOME="$CONFLICT_HOME" /tmp/pd-v2-storage-smoke apply-conflict
           README_HOME="$(mktemp -d)"
           HOME="$README_HOME" /tmp/pd-v2-storage-smoke readme
           MULTI_HOME="$(mktemp -d)"

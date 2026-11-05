@@ -180,21 +180,20 @@ PDStorageState PDStorageBootstrap(void) {
         // temporarily parked under Backups after an interrupted transaction.
         BOOL hadPendingRestore=[NSFileManager.defaultManager fileExistsAtPath:
             [root stringByAppendingPathComponent:@"restore-pending.txt"]];
-        if (!hadPendingRestore && !PDInitializeExtraScopes()) {
-            PDSetStatus(PDStorageStateConflict,@"WebKit/Cookies/Preferences 目录冲突，原数据未覆盖");
-            return s_state;
-        }
+        // Extensions are independent. A system-managed Preferences path or
+        // another conflicting scope must NOT prevent core AppSupport mapping.
+        BOOL extrasReady=YES;
+        if (!hadPendingRestore) extrasReady=PDInitializeExtraScopes();
         if (!PDApplyPendingRestore()) {
             PDSetStatus(PDStorageStateConflict,@"检测到未完成的数据恢复，请先检查 Inbox、Incoming 和 Backups");
             return s_state;
         }
-        if(hadPendingRestore && !PDInitializeExtraScopes()) {
-            PDSetStatus(PDStorageStateConflict,@"恢复后 WebKit/Cookies/Preferences 目录冲突，原数据未覆盖");
-            return s_state;
-        }
+        if(hadPendingRestore) extrasReady=PDInitializeExtraScopes();
+        if(!extrasReady) PDStorageTrace(@"Some optional scopes were not mapped; core Application Support bootstrap continues");
         if (PDLinkMatches(source,target)) {
             PDWriteManifest();
-            PDSetStatus(PDStorageStateReady,@"目录映射已存在");
+            PDSetStatus(PDStorageStateReady,extrasReady ? @"目录映射已存在" :
+                @"Application Support 已映射；部分扩展目录未映射，详见 scope-mapping-result.json");
             return s_state;
         }
         struct stat src={0},dst={0};
@@ -254,7 +253,8 @@ PDStorageState PDStorageBootstrap(void) {
             return s_state;
         }
         PDWriteManifest();
-        PDSetStatus(PDStorageStateRecovered,@"持久化目录已建立并验证");
+        PDSetStatus(PDStorageStateRecovered,extrasReady ? @"持久化目录已建立并验证" :
+            @"Application Support 已建立；部分扩展目录未映射，详见 scope-mapping-result.json");
         return s_state;
     }
 }

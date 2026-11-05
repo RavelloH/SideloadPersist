@@ -70,7 +70,65 @@ int main(int argc,char **argv) {
         NSString *prefsDir=[data stringByAppendingPathComponent:@"Preferences"];
         NSString *pending=[root stringByAppendingPathComponent:@"restore-pending.txt"];
         NSFileManager *fm=NSFileManager.defaultManager;
-        if(strcmp(argv[1],"readme")==0) {
+        if(strcmp(argv[1],"prepare-conflict")==0) {
+            // Reproduce the exact regression: Preferences has an incompatible
+            // pre-existing source and target, but other scopes are mountable.
+            NSString *original=[home stringByAppendingPathComponent:@"Library/Preferences/user.plist"];
+            NSString *saved=[prefsDir stringByAppendingPathComponent:@"old.plist"];
+            put(original,@"CURRENT_USER_PREFS");
+            put(saved,@"ALREADY_SAVED_PREFS");
+            check(PDStorageBootstrap()==PDStorageStateRecovered,
+                  @"conflicting Preferences must not prevent AppSupport bootstrap");
+            check(PDStorageIsLinked(),@"core AppSupport symlink active despite optional conflict");
+            struct stat st={0};
+            for(NSString *scope in @[@"WebKit",@"Cookies"]) {
+                NSString *src=[home stringByAppendingPathComponent:
+                    [@"Library" stringByAppendingPathComponent:scope]];
+                check(lstat(src.fileSystemRepresentation,&st)==0 && S_ISLNK(st.st_mode),
+                      [NSString stringWithFormat:@"non-conflicting scope %@ mounted",scope]);
+            }
+            NSString *sourcePreferences=[home stringByAppendingPathComponent:@"Library/Preferences"];
+            check(lstat(sourcePreferences.fileSystemRepresentation,&st)==0 && S_ISDIR(st.st_mode),
+                  @"conflicting Preferences source retained as real directory");
+            check([readFile(original) isEqualToString:@"CURRENT_USER_PREFS"],
+                  @"original Preferences contents not overwritten");
+            check([readFile(saved) isEqualToString:@"ALREADY_SAVED_PREFS"],
+                  @"persisted target Preferences contents not overwritten");
+            NSString *manifestPath=[root stringByAppendingPathComponent:@"manifest.json"];
+            NSDictionary *manifest=[NSJSONSerialization JSONObjectWithData:
+                  [NSData dataWithContentsOfFile:manifestPath] options:0 error:nil];
+            check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V2"],
+                  @"manifest lists only actually linked scopes");
+            check(![manifest[@"scopes"] containsObject:@"Preferences"],
+                  @"manifest does not falsely declare conflicting Preferences");
+            check([readFile([root stringByAppendingPathComponent:@"README.md"])
+                  containsString:@"| `Data/Preferences` | `Library/Preferences` | 未建立映射"],
+                  @"README accurately shows omitted scope");
+            NSDictionary *report=[NSJSONSerialization JSONObjectWithData:
+                  [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"scope-mapping-result.json"]]
+                  options:0 error:nil];
+            BOOL diagnosed=NO;
+            for(NSDictionary *entry in report[@"scopes"]) if([entry[@"scope"] isEqualToString:@"Preferences"] &&
+                ![entry[@"mapped"] boolValue] &&
+                [entry[@"reason"] isEqualToString:@"source-and-target-both-nonempty"]) diagnosed=YES;
+            check(diagnosed,@"diagnostic identifies the exact conflicting scope and reason");
+            NSString *zip=[home stringByAppendingPathComponent:@"conflict-v2.zip"];
+            makeArchive(zip,NO,NO);
+            NSError *error=nil;
+            check(PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error).length==36,
+                  @"older v2 backup stages without mutating conflicting Preferences");
+        } else if(strcmp(argv[1],"apply-conflict")==0) {
+            check(PDStorageBootstrap()==PDStorageStateReady,
+                  @"older v2 backup restored despite unrelated Preferences conflict");
+            check([readFile([app stringByAppendingPathComponent:@"test.sqlite"]) isEqualToString:@"APP_RESTORED"],
+                  @"AppSupport restored in degraded mode");
+            check([readFile([home stringByAppendingPathComponent:@"Library/Preferences/user.plist"])
+                  isEqualToString:@"CURRENT_USER_PREFS"],
+                  @"source Preferences preserved across restore");
+            check([readFile([prefsDir stringByAppendingPathComponent:@"old.plist"])
+                  isEqualToString:@"ALREADY_SAVED_PREFS"],
+                  @"conflicting target Preferences preserved across restore");
+        } else if(strcmp(argv[1],"readme")==0) {
             check(PDStorageBootstrap()==PDStorageStateRecovered,@"initialize README managed state");
             NSString *path=[root stringByAppendingPathComponent:@"README.md"];
             NSString *original=readFile(path);
