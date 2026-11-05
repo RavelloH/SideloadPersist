@@ -66,7 +66,7 @@ ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP �
 GitHub Actions 自动生成（未签名）：
 
 - `SideloadPersist-ios-arm64-unsigned`：注入式 dylib；
-- `StorageProbe-unsigned-ipa`：测试 `NSFileManager`、`NSData`、`NSFileHandle`、POSIX `open/write/stat`、`stdio`、SQLite WAL、CoreData SQLite、NSUserDefaults；另加 **WebKit / Preferences 存储范围研究**按钮，枚举部分 Library 子目录是否存在、尝试 WKWebView `localStorage` 持久化。扩展测试不会搬移这两个系统目录，避免未经验证直接破坏 WebKit 或 cfprefsd。
+- `StorageProbe-unsigned-ipa`：测试 `NSFileManager`、`NSData`、`NSFileHandle`、POSIX `open/write/stat`、`stdio`、SQLite WAL、CoreData SQLite、NSUserDefaults；另加 **WebKit / Preferences 存储范围研究**按钮，枚举部分 Library 子目录是否存在、尝试 WKWebView `localStorage` 持久化。扩展测试不会搬移这些系统目录，避免未经验证直接破坏 WebKit 或 cfprefsd。增强的 StorageProbe 将分别输出 `PREFERENCES_COUNTER`、`WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 和 `WEBKIT_DATA_RECORDS`，并比较 `Library/WebKit`、`Library/Cookies`、`Library/Caches/com.apple.WebKit.Networking`、`Library/Preferences` 的文件数及大小（`SCOPE_FOOTPRINT phase=before/after`）。不输出用户文件名或网站域名。通过二次启动比较各类别是否持续增长，以确定后续真正需要纳入 ZIP 恢复的目录。目录大小统计只是时点采样；WebKit 网络进程可能异步刷新，不能直接用文件大小证明数据确实只保存在某个目录。
 - `PickerProbe-unsigned-ipa`：保留的文件选择器兼容性测试。
 
 **StorageProbe 不自带 dylib。** 使用 LCSign 等工具注入 dylib、开启文件共享、签名安装，打开 StorageProbe 后按「运行存储 API 测试」，复制结果并在「文件」App 中确认 `SideloadPersist/Data/Application Support/StorageProbe` 下确实存在文件。新版输出 `SQLITE_ROWS`、`COREDATA_ROWS` 精确计数，以及 `PERSISTENT_DATA_MARKER`（随 Documents 数据恢复）和 `INSTALLATION_ID`（属于 UserDefaults，卸载重装后变化）。严格验证跨安装恢复时：备份前记录这些数值；重装后导入 ZIP、冷启动再运行，应该看到安装 ID 改变、数据标记恢复到旧值、两种数据库的记录数从旧值继续增加。不要直接在重要 App 上测试首次目录迁移。

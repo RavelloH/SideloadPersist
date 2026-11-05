@@ -15,6 +15,10 @@
 
 @implementation StorageProbeController
 - (void)line:(NSString *)text {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self line:text]; });
+        return;
+    }
     if (!self.history) self.history=[NSMutableString string];
     [self.history appendFormat:@"%@\n",text];
     NSLog(@"[StorageProbe] %@",text);
@@ -71,10 +75,59 @@
     [self line:[NSString stringWithFormat:@"iOS=%@ bundle=%@",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier]];
     [self line:@"注入 dylib 后首次运行可能先显示持久化介绍页。关闭后测试。"];
 }
+- (void)reportScopeFootprints:(NSString *)phase {
+    NSString *library=[NSHomeDirectory() stringByAppendingPathComponent:@"Library"];
+    NSArray<NSString *> *paths=@[@"WebKit",@"Cookies",@"Caches/com.apple.WebKit.Networking",@"Preferences",@"Caches"];
+    NSFileManager *fm=NSFileManager.defaultManager;
+    for(NSString *relative in paths) {
+        NSString *full=[library stringByAppendingPathComponent:relative];
+        BOOL isDir=NO;
+        BOOL exists=[fm fileExistsAtPath:full isDirectory:&isDir];
+        NSUInteger count=0;
+        unsigned long long bytes=0;
+        if(exists && isDir) {
+            NSDirectoryEnumerator *items=[fm enumeratorAtPath:full];
+            NSString *next=nil;
+            while(count<5000 && (next=[items nextObject])) {
+                NSDictionary *attributes=[fm attributesOfItemAtPath:[full stringByAppendingPathComponent:next] error:nil];
+                if([attributes[NSFileType] isEqualToString:NSFileTypeRegular]) {
+                    count++;
+                    bytes += [attributes[NSFileSize] unsignedLongLongValue];
+                }
+            }
+        }
+        [self line:[NSString stringWithFormat:@"SCOPE_FOOTPRINT phase=%@ path=%@ exists=%@ files=%lu bytes=%llu%@",
+            phase,relative,exists?@"yes":@"no",(unsigned long)count,bytes,
+            count>=5000 ? @" capped" : @""]];
+    }
+}
+- (void)reportWebsiteRecords {
+    NSSet<NSString *> *types=[NSSet setWithArray:@[WKWebsiteDataTypeLocalStorage,
+        WKWebsiteDataTypeIndexedDBDatabases,WKWebsiteDataTypeCookies,WKWebsiteDataTypeDiskCache]];
+    [WKWebsiteDataStore.defaultDataStore fetchDataRecordsOfTypes:types
+        completionHandler:^(NSArray<WKWebsiteDataRecord *> *records) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSUInteger local=0,cookies=0,indexed=0;
+                for(WKWebsiteDataRecord *record in records) {
+                    if([record.dataTypes containsObject:WKWebsiteDataTypeLocalStorage]) local++;
+                    if([record.dataTypes containsObject:WKWebsiteDataTypeCookies]) cookies++;
+                    if([record.dataTypes containsObject:WKWebsiteDataTypeIndexedDBDatabases]) indexed++;
+                }
+                [self line:[NSString stringWithFormat:@"WEBKIT_DATA_RECORDS total=%lu localStorage=%lu indexedDB=%lu cookies=%lu",
+                    (unsigned long)records.count,(unsigned long)local,(unsigned long)indexed,(unsigned long)cookies]];
+            });
+        }];
+}
 - (void)runExtendedScope {
     NSString *library=[NSHomeDirectory() stringByAppendingPathComponent:@"Library"];
     NSArray<NSString *> *names=@[@"WebKit",@"Preferences",@"Cookies",@"Caches",@"Saved Application State"];
-    [self line:@"=== 扩展目录检查：本轮只读，不迁移系统目录 ==="];
+    [self line:@"=== 扩展目录检查：仅测试 App 写入；不迁移系统目录 ==="];
+    [self reportScopeFootprints:@"before"];
+    NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+    NSInteger previous=[defaults integerForKey:@"StorageProbe.ExtendedPreferencesCounter"];
+    [defaults setInteger:previous+1 forKey:@"StorageProbe.ExtendedPreferencesCounter"];
+    [self line:[NSString stringWithFormat:@"PREFERENCES_COUNTER before=%ld after=%ld (compare across real cold starts)",
+                 (long)previous,(long)previous+1]];
     for (NSString *name in names) {
         NSString *p=[library stringByAppendingPathComponent:name];
         BOOL isDirectory=NO;
@@ -97,6 +150,36 @@
         self.webKitProbe.alpha=0.01;
         [self.view addSubview:self.webKitProbe];
     }
+    // CookieStore is mediated by WebKit's separate network process, and may
+    // live outside Library/WebKit. Only the synthetic probe cookie is touched.
+    WKHTTPCookieStore *cookies=self.webKitProbe.configuration.websiteDataStore.httpCookieStore;
+    [cookies getAllCookies:^(NSArray<NSHTTPCookie *> *allCookies) {
+        NSInteger oldValue=0;
+        for(NSHTTPCookie *cookie in allCookies) {
+            if([cookie.name isEqualToString:@"SideloadPersistStorageProbe"] &&
+               [cookie.domain containsString:@"storageprobe.invalid"]) {
+                oldValue=cookie.value.integerValue;
+                break;
+            }
+        }
+        NSDictionary *properties=@{
+           NSHTTPCookieName: @"SideloadPersistStorageProbe",
+           NSHTTPCookieValue: [NSString stringWithFormat:@"%ld",(long)(oldValue+1)],
+           NSHTTPCookieDomain: @"storageprobe.invalid",
+           NSHTTPCookiePath: @"/",
+           NSHTTPCookieExpires: [NSDate dateWithTimeIntervalSinceNow:60*60*24*30]
+        };
+        NSHTTPCookie *cookie=[NSHTTPCookie cookieWithProperties:properties];
+        if (!cookie) {
+            [self line:@"WEBKIT_COOKIE_ERROR: could not construct test cookie"];
+            return;
+        }
+        [cookies setCookie:cookie completionHandler:^{
+            [self line:[NSString stringWithFormat:@"WEBKIT_COOKIE_COUNTER before=%ld after=%ld",
+                (long)oldValue,(long)(oldValue+1)]];
+            [self reportWebsiteRecords];
+        }];
+    }];
     [self line:@"WEBKIT_TEST: loading local HTML using a stable base URL (no network navigation expected)"];
     [self.webKitProbe loadHTMLString:@"<!doctype html><html><body>StorageProbe WebKit</body></html>"
                                   baseURL:[NSURL URLWithString:@"https://storageprobe.invalid/"]];
@@ -112,6 +195,18 @@
         NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/WebKit"];
         [self line:[NSString stringWithFormat:@"WEBKIT_LIBRARY_DIR_EXISTS=%@",
                     [[NSFileManager defaultManager] fileExistsAtPath:path] ? @"yes":@"no"]];
+        NSString *indexedScript=@"return await new Promise((resolve) => { try { const request=indexedDB.open('SideloadPersistStorageProbe',1); request.onupgradeneeded=() => { if (!request.result.objectStoreNames.contains('values')) request.result.createObjectStore('values'); }; request.onerror=() => resolve('open failed: '+request.error); request.onsuccess=() => { const database=request.result; const tx=database.transaction('values','readwrite'); const store=tx.objectStore('values'); const get=store.get('counter'); let oldValue=0; get.onsuccess=() => { oldValue=Number(get.result)||0; store.put(oldValue+1,'counter'); }; tx.oncomplete=() => { database.close(); resolve(JSON.stringify({before:oldValue,after:oldValue+1})); }; tx.onerror=() => { database.close(); resolve('transaction failed: '+tx.error); }; }; } catch(error) { resolve('exception: '+String(error)); } });";
+        [webView callAsyncJavaScript:indexedScript arguments:@{} inFrame:nil
+                           inContentWorld:WKContentWorld.pageWorld
+                        completionHandler:^(id value,NSError *jsError) {
+            [self line:[NSString stringWithFormat:@"WEBKIT_INDEXEDDB=%@ error=%@",
+                value ?: @"none",jsError.localizedDescription ?: @"none"]];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2*NSEC_PER_SEC)),
+                           dispatch_get_main_queue(),^{
+                [self reportScopeFootprints:@"after"];
+                [self reportWebsiteRecords];
+            });
+        }];
     }];
 }
 - (void)runTests {
