@@ -39,12 +39,15 @@ static void prefs(NSString *value){
          [NSString stringWithFormat:@"write live Preferences %@",err]);
 }
 static NSString *prefValue(void){return PDPreferencesValues(appID())[@"restoreMarker"];}
-static void archive(NSString *p,BOOL withPrefs,BOOL missingCookie){
+static void archiveWithIdentity(NSString *p,BOOL withPrefs,BOOL missingCookie,
+                                NSString *sourceBundle){
     mz_zip_archive zip={0};
     check(mz_zip_writer_init_file(&zip,p.fileSystemRepresentation,0),@"ZIP initialize");
-    NSString *manifest=withPrefs?
-        @"{\"format\":\"SideloadPersist.Directory.V3\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\",\"Preferences\"]}":
-        @"{\"format\":\"SideloadPersist.Directory.V2\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\"]}";
+    NSString *identity=[sourceBundle isEqualToString:@"__legacy__"] ? @"" :
+        [NSString stringWithFormat:@",\"originalBundleID\":\"%@\"",sourceBundle ?: appID()];
+    NSString *manifest=[NSString stringWithFormat:withPrefs?
+        @"{\"format\":\"SideloadPersist.Directory.V3\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\",\"Preferences\"]%@}":
+        @"{\"format\":\"SideloadPersist.Directory.V2\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\"]%@}",identity];
     NSDictionary *contents=@{
         @"SideloadPersist/manifest.json":manifest,
         @"SideloadPersist/Data/Application Support/test.sqlite":@"APP_NEW",
@@ -97,6 +100,9 @@ static void archive(NSString *p,BOOL withPrefs,BOOL missingCookie){
     check(mz_zip_writer_finalize_archive(&zip),@"ZIP finalize");
     mz_zip_writer_end(&zip);
 }
+static void archive(NSString *p,BOOL withPrefs,BOOL missingCookie) {
+    archiveWithIdentity(p,withPrefs,missingCookie,nil);
+}
 static void scopeChecks(void){
     check(linked(lib(@"Application Support")) && linked(lib(@"WebKit")) && linked(lib(@"Cookies")),
           @"existing three scope symlinks");
@@ -119,7 +125,24 @@ int main(int argc,char **argv){
     NSString *mode=[NSString stringWithUTF8String:argv[1]];
     NSString *pending=[root() stringByAppendingPathComponent:@"restore-pending.txt"];
     NSFileManager *fm=NSFileManager.defaultManager;
-    if([mode isEqualToString:@"prepare-private-conflict"]) {
+    if([mode isEqualToString:@"identity-mismatch"] ||
+       [mode isEqualToString:@"identity-legacy"]) {
+        check(PDStorageBootstrap()==PDStorageStateRecovered,@"identity test initializes storage");
+        NSString *zip=[home() stringByAppendingPathComponent:@"identity-test.zip"];
+        BOOL legacy=[mode isEqualToString:@"identity-legacy"];
+        archiveWithIdentity(zip,NO,NO,legacy?@"__legacy__":@"org.other.vendor");
+        NSString *seen=nil;
+        PDArchiveIdentityState state=PDArchiveInspectIdentity([NSURL fileURLWithPath:zip],&seen);
+        check(state==(legacy?PDArchiveIdentityStateLegacyUnknown:
+                     PDArchiveIdentityStateDifferentApp),@"backup identity preflight recognized mismatch");
+        NSError *error=nil;
+        check(!PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error),
+              @"unverified identity rejected by default");
+        check(![fm fileExistsAtPath:pending],@"identity refusal does not stage restore");
+        error=nil;
+        check(PDArchiveStageZIPWithIdentityApproval([NSURL fileURLWithPath:zip],YES,&error).length==36,
+              @"explicit identity approval permits compatible archive");
+    } else if([mode isEqualToString:@"prepare-private-conflict"]) {
         NSString *original=[lib(appID()) stringByAppendingPathComponent:@"marker.txt"];
         NSString *nested=[[[data(@"Application Support")
                              stringByAppendingPathComponent:@"SideloadPersist.Library"]
