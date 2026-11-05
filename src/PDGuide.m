@@ -49,26 +49,26 @@ static UIView *PDGuideStep(NSUInteger index, NSString *heading, NSString *descri
     NSString *appFolder=[NSString stringWithFormat:@"在我的 iPhone › %@",appName];
 
     NSArray<NSString *> *headings=@[
-        @"正常使用",@"签名过期时",@"重新安装",@"恢复备份",@"大功告成！",@"更多可能…"
+        @"受支持的范围",@"先保留备份",@"校验备份",@"暂存恢复",@"核对恢复结果",@"保留与限制"
     ];
     NSArray<NSString *> *descriptions=@[
-        @"无需任何操作，插件会自动将应用中受支持的私有数据转移到可访问的持久化目录。",
-        [NSString stringWithFormat:@"先不要卸载 App。打开「文件」App，前往「%@」，压缩「SideloadPersist」文件夹，再将 ZIP 转存到该 App 文件夹之外的安全位置。",appFolder],
-        [NSString stringWithFormat:@"现在可以删除并重新安装 App。删除前，请确认刚保存的 ZIP 确实位于「%@」之外，例如 iCloud Drive。",appFolder],
-        @"打开 App，选择「导入备份 ZIP」，待校验完成后按提示退出，再手动打开 App 完成恢复。",
-        @"您备份的应用数据已完成迁移。妥善保存备份，以后不必再担心签名过期导致这些数据丢失。",
-        @"在 App 关闭的情况下，您可以通过「SideloadPersist」直接读写已迁出的应用私有数据，无需越狱。更多可能性等您来发现！"
+        @"插件会尝试迁移受支持的应用私有数据，但并非所有目录、凭据和系统服务都能被覆盖。遇到异常时应先保留原安装。",
+        [NSString stringWithFormat:@"在卸载之前先完全退出 App。打开「文件」App，找到「%@」，压缩整个 SideloadPersist 文件夹，并将 ZIP 另存至应用文件夹以外。",appFolder],
+        @"确认 ZIP 可以在独立位置找到，且没有出现偏好写入故障或目录冲突提示。只有拥有可用的外部备份，才考虑删除原应用。",
+        @"重装后通过插件导入 ZIP。不同应用标识或缺少来源信息的旧备份需要你主动核对和确认；导入会先暂存，下一次冷启动才尝试恢复。",
+        @"重新打开后检查重要业务数据和恢复收据。暂存成功、恢复事务提交成功，都不等于所有应用功能或登录凭据必然恢复。",
+        @"请继续保留原 ZIP 和 Backups。Keychain、App Groups、Caches 等不在当前完整保障范围；不要把备份公开分享。"
     ];
 
     UILabel *title=PDGuideLabel(@"数据如何保留与恢复",31,UIFontWeightBold,UIColor.labelColor);
-    UILabel *lead=PDGuideLabel(@"SideloadPersist 将应用受支持的私有数据目录迁移至「文件」App 可访问的 Documents 文件夹，方便备份、恢复与修改应用数据。",
+    UILabel *lead=PDGuideLabel(@"SideloadPersist 将受支持的应用私有数据映射到可访问的应用文档目录，方便用户自行备份和检查。Preferences 采用 API 读写适配。",
                                 16,UIFontWeightRegular,UIColor.secondaryLabelColor);
 
     NSMutableArray<UIView *> *rows=[NSMutableArray arrayWithObjects:title,lead,nil];
     for (NSUInteger i=0;i<headings.count;i++) {
         [rows addObject:PDGuideStep(i,headings[i],descriptions[i])];
     }
-    UILabel *footnote=PDGuideLabel(@"Application Support、WebKit、Cookies 采用目录迁移；Preferences 的 API 实时存储仍在测试中。Keychain、Caches 等暂未覆盖。退出 App 后再备份，并将 ZIP 保存到 App 文件夹之外。",
+    UILabel *footnote=PDGuideLabel(@"RC 候选版：Application Support、WebKit、Cookies 与部分 App 自建目录使用映射；Preferences 使用 API Hook。不同 App、签名身份及系统服务可能不兼容。必须保留独立 ZIP 并检查恢复结果。",
                                    12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
     [rows addObject:footnote];
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:rows];
