@@ -65,6 +65,20 @@ static void archive(NSString *p,BOOL withPrefs,BOOL missingCookie){
         NSString *entry=[@"SideloadPersist/Data/Preferences" stringByAppendingPathComponent:file.lastPathComponent];
         check(raw && mz_zip_writer_add_mem(&zip,entry.UTF8String,raw.bytes,raw.length,MZ_BEST_SPEED),
               @"ZIP canonical Preferences plist");
+        // Legacy v3 archives may contain accidentally captured UIKit/Apple suites.
+        // They must still be importable, but the new Hook must exclude those
+        // synthetic system-domain records after a cold-start restore.
+        NSString *systemDomain=@"com.apple.Accessibility";
+        NSError *systemError=nil;
+        check(PDPreferencesEnsureDomain(systemDomain,@{@"synthetic":@"not real OS preferences"},&systemError),
+              @"simulate legacy ZIP containing Apple suite");
+        NSString *systemPath=PDPreferencesDomainFile(systemDomain);
+        NSData *systemRaw=[NSData dataWithContentsOfFile:systemPath];
+        NSString *systemEntry=[@"SideloadPersist/Data/Preferences"
+                                stringByAppendingPathComponent:systemPath.lastPathComponent];
+        check(systemRaw && mz_zip_writer_add_mem(&zip,systemEntry.UTF8String,
+                          systemRaw.bytes,systemRaw.length,MZ_BEST_SPEED),
+              @"ZIP includes synthetic legacy system preference domain");
     }
     check(mz_zip_writer_finalize_archive(&zip),@"ZIP finalize");
     mz_zip_writer_end(&zip);
@@ -184,6 +198,10 @@ int main(int argc,char **argv){
         check([readFile([data(@"Cookies") stringByAppendingPathComponent:@"Cookies.binarycookies"]) isEqualToString:@"COOKIE_NEW"],
               @"V3 restored Cookies");
         check([prefValue() isEqualToString:@"PREF_NEW"],@"V3 restored live Preferences");
+        check(!PDPreferencesDomainExists(@"com.apple.Accessibility"),
+              @"restored legacy system domain moved out of exported Data");
+        check([[PDPreferencesHealth() objectForKey:@"domainFiles"] unsignedIntegerValue]==1,
+              @"only app-owned Preferences record is in active backup scope");
         check(![fm fileExistsAtPath:pending],@"V3 pending marker removed");
         NSDictionary *receipt=json([root() stringByAppendingPathComponent:@"restore-last.json"]);
         check([receipt[@"scopes"] containsObject:@"Preferences"],@"V3 receipt includes Preferences");
