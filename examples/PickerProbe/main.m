@@ -94,6 +94,14 @@
     PDPickerHostFixSetLogger(^(NSString *message) { [weakSelf record:@"HostFix: %@",message]; });
     PDPickerHostFixSetEnabled(self.hostFixSwitch.on);
     [self record:@"Probe launched; iOS=%@; bundle=%@; no filesystem hooks; %@",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier,PDPickerHostFixStatus()];
+    NSString *signedID = PDPickerHostFixActualBundleID();
+    NSString *plistID = NSBundle.mainBundle.bundleIdentifier;
+    if (signedID.length && ![signedID isEqualToString:plistID]) {
+        self.status.text=@"签名 ID 与 Info.plist ID 不一致！请测试 ID 一致的 IPA。";
+        [self record:@"IDENTITY_MISMATCH: signedBundle=%@ plistBundle=%@; file picker may reject app identity",signedID,plistID];
+    } else {
+        [self record:@"IDENTITY_CHECK: signedBundle and Info.plist bundle MATCH (or entitlement unavailable)"];
+    }
 }
 - (void)hostFixChanged:(UISwitch *)sender {
     [[NSUserDefaults standardUserDefaults] setBool:sender.on forKey:@"PickerProbe.HostFixEnabled"];

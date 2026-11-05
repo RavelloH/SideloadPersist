@@ -55,6 +55,26 @@ A third-party injected library is loaded inside an arbitrary process. Blocking i
 - **Still broken on v0.6:** Try the separate unsigned `PickerProbe-unsigned.ipa` signed as a new standalone app (no injection; unique Bundle ID). Compare **file** and **folder** selection there with the same provider and subfolder. If that independent app also cannot select folders, investigate File Provider or iOS behavior rather than modifying host-app hooks. Copy only needed logs and redact private paths.
 - Neither the injected dylib nor the independent IPA can intercept the system-owned **Open** button tap; only picker callbacks and pending state are observable. This is compiled and smoke-tested in CI, not yet verified on iOS 27 hardware.
 
+## Signed identity mismatch experiment (recommended after v0.6 HostFix fails)
+
+On a real iOS 27.0.1 device we observed:
+
+- `Info.plist CFBundleIdentifier = com.ravelloh.pickerprobe`
+- signed `application-identifier` suffix = `app.crystal7397.mango7474`
+- LiveContainer-inspired `DOCConfiguration.setHostIdentifier` hook was installed and invoked, but **neither file nor folder picker returned a URL**.
+
+This is **not yet proof** that the bundle mismatch alone causes the failure, but the mismatch should be eliminated *before* further changes to private APIs. Apple documents the identity relationship and LiveContainer's JIT-less diagnostics explicitly warns about signed app IDs that differ from bundle IDs.
+
+The independent PickerProbe app now logs `IDENTITY_MISMATCH` if it detects a discrepancy. To produce a new unsigned IPA for the comparison, use:
+
+```sh
+python scripts/prepare_matched_ipa.py dist/PickerProbe-unsigned.ipa dist/PickerProbe-matched-unsigned.ipa app.crystal7397.mango7474
+```
+
+Then sign the **patched IPA** with the same signer/certificate that produced the previously observed entitlement value, and install it independently. Do not inject any dylib. Re-open its logs and verify `signedBundle == plistBundle` in the **final signed app**; the signing tool may rewrite them again. Only then repeat the file and folder picker tests. Test with the HostFix toggle OFF first to avoid confounding factors. If the signed IDs still mismatch, change the signer configuration so it signs the intended bundle identifier, or use a compatible provisioning profile. Never manually forge entitlements to bypass provisioning constraints.
+
+The patch script rejects already-signed input: modifying a signed IPA invalidates its signature, and the output must always be signed again. **Do not rename the user's production app bundle ID** without a backup or considering its identity-dependent services. This experiment is for the disposable PickerProbe app only.
+
 ## Security note
 
 The code does not attempt to bypass iOS sandboxing. It only accesses user-authorized folders. Never use another app's private data directory or assume a file-provider URL will support arbitrary POSIX operations or database concurrency.
