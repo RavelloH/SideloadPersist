@@ -35,7 +35,8 @@ jobs:
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
             -miphoneos-version-min=15.0 -fobjc-arc -fmodules -O2 -Wall -Wextra \
             -Wno-unused-parameter -framework UIKit -framework Foundation \
-            -framework UniformTypeIdentifiers examples/PickerProbe/main.m \
+            -framework UniformTypeIdentifiers -framework Security \
+            examples/PickerProbe/main.m src/PDPickerHostFix.m \
             -o dist/probe-stage/Payload/PickerProbe.app/PickerProbe
           cp examples/PickerProbe/Info.plist dist/probe-stage/Payload/PickerProbe.app/Info.plist
           plutil -lint dist/probe-stage/Payload/PickerProbe.app/Info.plist

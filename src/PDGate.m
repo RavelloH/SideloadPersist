@@ -1,5 +1,6 @@
 #import "PDRedirect.h"
 #import "PDDiagnostics.h"
+#import "PDPickerHostFix.h"
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -15,6 +16,7 @@ static BOOL s_bootstrapped = NO;
 static BOOL s_choosing = NO;
 static BOOL s_validating = NO;
 static BOOL s_fileProbe = NO;
+static NSString *const kHostFixEnabledKey = @"SideloadPersist.FixFilePickerHostID";
 
 static NSString *PDNormalizeContainerPath(NSString *p) {
     if ([p hasPrefix:@"/private/var/"]) return [p substringFromIndex:8];
@@ -32,6 +34,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
 @property(nonatomic,strong) UIButton *chooseButton;
 @property(nonatomic,strong) UIButton *compatibilityButton;
 @property(nonatomic,strong) UIButton *fileProbeButton;
+@property(nonatomic,strong) UIButton *hostFixButton;
 @end
 
 @interface PDGateManager : NSObject
@@ -56,6 +59,8 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     // Leave the document picker completely untouched by our filesystem hooks.
     // Activate hooks only after a folder URL is accepted and verified.
     PDLog(@"Dylib startup; bundle=%@ system=%@; filesystem hooks deferred until authorization",NSBundle.mainBundle.bundleIdentifier ?: @"unknown",UIDevice.currentDevice.systemVersion);
+    PDPickerHostFixSetLogger(^(NSString *message) { PDLog(@"HostFix: %@", message); });
+    PDPickerHostFixSetEnabled([[NSUserDefaults standardUserDefaults] boolForKey:kHostFixEnabledKey]);
     for (NSNotificationName name in @[UIApplicationDidBecomeActiveNotification,
                                        UISceneDidActivateNotification,
                                        UIWindowDidBecomeKeyNotification]) {
@@ -228,11 +233,16 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     fileProbe.titleLabel.font=[UIFont systemFontOfSize:15];
     [fileProbe addTarget:self action:@selector(probeFileSelection) forControlEvents:UIControlEventTouchUpInside];
     self.fileProbeButton = fileProbe;
+    UIButton *hostFix = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.hostFixButton = hostFix;
+    [self updateHostFixButton];
+    hostFix.titleLabel.font=[UIFont systemFontOfSize:14];
+    [hostFix addTarget:self action:@selector(toggleHostFix) forControlEvents:UIControlEventTouchUpInside];
     UIButton *diagnostics=[UIButton buttonWithType:UIButtonTypeSystem];
     [diagnostics setTitle:@"查看诊断日志" forState:UIControlStateNormal];
     diagnostics.titleLabel.font=[UIFont systemFontOfSize:15];
     [diagnostics addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
-    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,button,alternate,fileProbe,diagnostics,self.statusLabel]];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,body,hostFix,button,alternate,fileProbe,diagnostics,self.statusLabel]];
     stack.axis=UILayoutConstraintAxisVertical;
     stack.spacing=24;
     stack.alignment=UIStackViewAlignmentFill;
@@ -243,6 +253,19 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         [stack.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:24],
         [stack.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-24]
     ]];
+}
+- (void)updateHostFixButton {
+    [self.hostFixButton setTitle:PDPickerHostFixIsEnabled() ? @"LiveContainer 式修复：已开启（点按关闭）" : @"LiveContainer 式修复：关闭（点按开启）" forState:UIControlStateNormal];
+}
+- (void)toggleHostFix {
+    if (s_choosing || s_validating) return;
+    BOOL enabled = !PDPickerHostFixIsEnabled();
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kHostFixEnabledKey];
+    PDPickerHostFixSetEnabled(enabled);
+    if (enabled) PDPickerHostFixInstallIfAvailable();
+    [self updateHostFixButton];
+    self.statusLabel.text = enabled ? @"已启用真实签名身份修复，请重新测试文件夹与普通文件。" : @"已关闭修复，可做前后对照。";
+    PDLog(@"HostFix setting changed: %@",PDPickerHostFixStatus());
 }
 - (void)showDiagnostics {
     PDPresentDiagnostics(self);
@@ -265,6 +288,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     }
     s_choosing = YES;
     s_fileProbe = YES;
+    if (PDPickerHostFixIsEnabled()) PDPickerHostFixInstallIfAvailable();
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     PDLog(@"File selection probe started; filesystem hooks are deferred");
@@ -300,6 +324,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
         PDLog(@"Folder picker initialization returned nil, compatibility=%@",compatibility ? @"yes" : @"no");
         return;
     }
+    if (PDPickerHostFixIsEnabled()) PDPickerHostFixInstallIfAvailable();
     picker.delegate=self;
     picker.allowsMultipleSelection=NO;
     if (compatibility) picker.modalPresentationStyle=UIModalPresentationOverFullScreen;

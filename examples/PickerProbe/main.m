@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import "../../src/PDPickerHostFix.h"
 
 // Independent control app, deliberately NOT injected with SideloadPersist.
 // Test on the same iOS device and certificate to compare folder/file picker behavior.
@@ -8,6 +9,7 @@
 @property(nonatomic,strong) UILabel *status;
 @property(nonatomic,strong) NSMutableString *history;
 @property(nonatomic,copy) NSString *currentKind;
+@property(nonatomic,strong) UISwitch *hostFixSwitch;
 @end
 
 @implementation ProbeController
@@ -58,6 +60,16 @@
     self.logs.layer.cornerRadius=8;
     self.history=[[[NSUserDefaults standardUserDefaults] stringForKey:@"PickerProbe.Logs"] mutableCopy] ?: [NSMutableString string];
     self.logs.text=self.history;
+    UILabel *fixLabel=[[UILabel alloc] init];
+    fixLabel.text=@"LiveContainer 式修复（测试开关）";
+    fixLabel.font=[UIFont systemFontOfSize:14];
+    self.hostFixSwitch=[[UISwitch alloc] init];
+    self.hostFixSwitch.on=[[NSUserDefaults standardUserDefaults] boolForKey:@"PickerProbe.HostFixEnabled"];
+    [self.hostFixSwitch addTarget:self action:@selector(hostFixChanged:) forControlEvents:UIControlEventValueChanged];
+    UIStackView *fixRow=[[UIStackView alloc] initWithArrangedSubviews:@[fixLabel,self.hostFixSwitch]];
+    fixRow.axis=UILayoutConstraintAxisHorizontal;
+    fixRow.spacing=10;
+    fixRow.distribution=UIStackViewDistributionEqualSpacing;
     UIButton *folder=[self button:@"① 选择外部文件夹" action:@selector(selectFolder)];
     UIButton *file=[self button:@"② 选择普通文件" action:@selector(selectFile)];
     UIButton *copy=[self button:@"复制日志" action:@selector(copyLogs)];
@@ -65,7 +77,7 @@
     UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[copy,clear]];
     row.axis=UILayoutConstraintAxisHorizontal;
     row.distribution=UIStackViewDistributionFillEqually;
-    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,desc,folder,file,self.status,self.logs,row]];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,desc,fixRow,folder,file,self.status,self.logs,row]];
     stack.axis=UILayoutConstraintAxisVertical;
     stack.spacing=9;
     stack.translatesAutoresizingMaskIntoConstraints=NO;
@@ -78,13 +90,27 @@
        [stack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
        [self.logs.heightAnchor constraintGreaterThanOrEqualToConstant:120],
     ]];
-    [self record:@"Probe launched; iOS=%@; bundle=%@; no filesystem hooks",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier];
+    __weak typeof(self) weakSelf=self;
+    PDPickerHostFixSetLogger(^(NSString *message) { [weakSelf record:@"HostFix: %@",message]; });
+    PDPickerHostFixSetEnabled(self.hostFixSwitch.on);
+    [self record:@"Probe launched; iOS=%@; bundle=%@; no filesystem hooks; %@",UIDevice.currentDevice.systemVersion,NSBundle.mainBundle.bundleIdentifier,PDPickerHostFixStatus()];
+}
+- (void)hostFixChanged:(UISwitch *)sender {
+    [[NSUserDefaults standardUserDefaults] setBool:sender.on forKey:@"PickerProbe.HostFixEnabled"];
+    PDPickerHostFixSetEnabled(sender.on);
+    if (sender.on) PDPickerHostFixInstallIfAvailable();
+    [self record:@"HostFix changed: %@",PDPickerHostFixStatus()];
+    self.status.text=sender.on ? @"已开启真实签名身份修复，请重新选择文件/文件夹" : @"修复已关闭（可对照测试）";
 }
 - (void)selectFolder { [self openType:@[UTTypeFolder] kind:@"folder"]; }
 - (void)selectFile { [self openType:@[UTTypeData,UTTypeContent] kind:@"file"]; }
 - (void)openType:(NSArray<UTType *> *)types kind:(NSString *)kind {
     self.currentKind=kind;
+    if (PDPickerHostFixIsEnabled()) PDPickerHostFixInstallIfAvailable();
     UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
+    // DOCConfiguration may only be loaded after picker initialization.
+    if (PDPickerHostFixIsEnabled()) PDPickerHostFixInstallIfAvailable();
+    [self record:@"HostFix status before picker presentation: %@",PDPickerHostFixStatus()];
     picker.delegate=self;
     picker.allowsMultipleSelection=NO;
     [self record:@"Opening picker; type=%@; presentation=%ld",kind,(long)picker.modalPresentationStyle];

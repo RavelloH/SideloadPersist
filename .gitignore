@@ -4,3 +4,4 @@ dist/
 *.p12
 *.mobileprovision
 *.key
+.ref-LiveContainer/
