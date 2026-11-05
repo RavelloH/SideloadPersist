@@ -106,7 +106,7 @@
 - (void)selectFile { [self openType:@[UTTypeData,UTTypeContent] kind:@"file"]; }
 - (void)openType:(NSArray<UTType *> *)types kind:(NSString *)kind {
     self.currentKind=kind;
-    if (PDPickerHostFixIsEnabled()) PDPickerHostFixInstallIfAvailable();
+    if (PDPickerHostFixIsEnabled()) PDPickerHostFixPrepareBeforePicker();
     UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
     // DOCConfiguration may only be loaded after picker initialization.
     if (PDPickerHostFixIsEnabled()) PDPickerHostFixInstallIfAvailable();

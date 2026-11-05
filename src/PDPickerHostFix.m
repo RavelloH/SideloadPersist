@@ -1,6 +1,8 @@
 #import "PDPickerHostFix.h"
 #import <objc/runtime.h>
 #import <Security/Security.h>
+#import <UIKit/UIKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <dlfcn.h>
 #import <stdatomic.h>
 #import <stdarg.h>
@@ -121,6 +123,22 @@ BOOL PDPickerHostFixInstallIfAvailable(void) {
     PDHostMessage(@"Installed DOCConfiguration hostIdentifier hook; signed bundle=%@",
                   PDPickerHostFixActualBundleID() ?: @"unavailable");
     return YES;
+}
+
+BOOL PDPickerHostFixPrepareBeforePicker(void) {
+    if (!PDPickerHostFixIsEnabled()) return NO;
+    if (PDPickerHostFixInstallIfAvailable()) return YES;
+    // DOCConfiguration can be lazily loaded by the first UIDocumentPicker init.
+    // Create and discard a harmless, unpresented picker, then install the
+    // method shim BEFORE initializing the real picker the user interacts with.
+    @autoreleasepool {
+        UIDocumentPickerViewController *warmup = [[UIDocumentPickerViewController alloc]
+             initForOpeningContentTypes:@[UTTypeItem]];
+        PDHostMessage(@"Prepared an unpresented document picker (initialized=%@) to load DOCConfiguration",warmup ? @"yes" : @"no");
+    }
+    BOOL installed = PDPickerHostFixInstallIfAvailable();
+    if (!installed) PDHostMessage(@"Private DOCConfiguration unavailable after warmup; continuing without host ID rewrite");
+    return installed;
 }
 
 NSString *PDPickerHostFixStatus(void) {

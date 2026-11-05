@@ -8,5 +8,6 @@ FOUNDATION_EXPORT void PDPickerHostFixSetLogger(PDPickerHostFixLogger logger);
 FOUNDATION_EXPORT void PDPickerHostFixSetEnabled(BOOL enabled);
 FOUNDATION_EXPORT BOOL PDPickerHostFixIsEnabled(void);
 FOUNDATION_EXPORT BOOL PDPickerHostFixInstallIfAvailable(void);
+FOUNDATION_EXPORT BOOL PDPickerHostFixPrepareBeforePicker(void);
 FOUNDATION_EXPORT NSString *PDPickerHostFixStatus(void);
 FOUNDATION_EXPORT NSString *PDPickerHostFixActualBundleID(void);

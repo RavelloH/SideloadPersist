@@ -279,6 +279,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
 - (void)probeFileSelection {
     if (s_choosing || s_validating) return;
     // Diagnostic only: do NOT activate Documents redirection or touch file contents.
+    if (PDPickerHostFixIsEnabled()) PDPickerHostFixPrepareBeforePicker();
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
         initForOpeningContentTypes:@[UTTypeData, UTTypeContent]];
     if (!picker) {
@@ -313,6 +314,7 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     // for diagnosing provider-specific or iOS 27 behavior. No sandbox bypass.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    if (PDPickerHostFixIsEnabled()) PDPickerHostFixPrepareBeforePicker();
     UIDocumentPickerViewController *picker = compatibility
       ? [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[UTTypeFolder.identifier]
                                                         inMode:UIDocumentPickerModeOpen]
