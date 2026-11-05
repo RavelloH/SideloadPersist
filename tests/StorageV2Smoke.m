@@ -7,6 +7,7 @@
 #import "PDArchive.h"
 #import "PDExperimentalScope.h"
 #import "PDV2Archive.h"
+#import "PDReadme.h"
 #import "miniz.h"
 
 static void check(BOOL yes,NSString *message) {
@@ -69,7 +70,28 @@ int main(int argc,char **argv) {
         NSString *prefsDir=[data stringByAppendingPathComponent:@"Preferences"];
         NSString *pending=[root stringByAppendingPathComponent:@"restore-pending.txt"];
         NSFileManager *fm=NSFileManager.defaultManager;
-        if(strcmp(argv[1],"prepare-fresh")==0) {
+        if(strcmp(argv[1],"readme")==0) {
+            check(PDStorageBootstrap()==PDStorageStateRecovered,@"initialize README managed state");
+            NSString *path=[root stringByAppendingPathComponent:@"README.md"];
+            NSString *original=readFile(path);
+            check([original containsString:@"SideloadPersist"] && [original containsString:@"RavelloH"],
+                  @"README created on first bootstrap");
+            PDReadmeUpdate(@[@"Application Support"]);
+            NSString *reduced=readFile(path);
+            check([reduced containsString:@"| `Data/Preferences` | `Library/Preferences` | 未建立映射"],
+                  @"README refreshes when verified scope set changes");
+            PDReadmeUpdate(@[@"Application Support",@"WebKit",@"Cookies",@"Preferences"]);
+            NSString *extended=readFile(path);
+            check([extended containsString:@"| `Data/Preferences` | `Library/Preferences` | 已建立映射"],
+                  @"README restores mapping table after scope update");
+            NSString *custom=[extended stringByAppendingString:@"\n## My Personal Notes\n"];
+            check([custom writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil],
+                  @"user customizes README");
+            PDReadmeUpdate(@[@"Application Support"]);
+            check([readFile(path) isEqualToString:custom],
+                  @"README customization is never overwritten");
+            NSLog(@"All automatic README generation/update/preservation checks passed.");
+        } else if(strcmp(argv[1],"prepare-fresh")==0) {
             check(PDStorageBootstrap()==PDStorageStateRecovered,@"brand new app initializes all scopes automatically");
             struct stat st={0};
             NSString *sourceWeb=[home stringByAppendingPathComponent:@"Library/WebKit"];
