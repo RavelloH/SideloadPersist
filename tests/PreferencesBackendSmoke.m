@@ -109,6 +109,28 @@ int main(int argc,char **argv) {
             verify([PDPreferencesValues(domain)[@"StorageProbe.HookCounter"] integerValue]==8,
                 @"native hook wrote live backing file");
             NSLog(@"Hook verified: %@",PDPreferencesHookStatus());
+        } else if(strcmp(argv[1],"stress")==0) {
+            NSError *error=nil;
+            verify(PDPreferencesEnsureDomain(domain,@{},&error),@"initialize concurrent live domain");
+            NSMutableArray *failures=[NSMutableArray array];
+            CFAbsoluteTime begin=CFAbsoluteTimeGetCurrent();
+            dispatch_apply(4,dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^(size_t worker){
+                NSString *key=[NSString stringWithFormat:@"Stress.worker%lu",(unsigned long)worker];
+                for(NSInteger i=0;i<100;i++) {
+                    NSError *writeError=nil;
+                    if(!PDPreferencesWriteValue(domain,key,@(i),&writeError)) {
+                        @synchronized(failures) { [failures addObject:writeError ?: NSNull.null]; }
+                    }
+                }
+            });
+            verify(failures.count==0,@"400 concurrent atomic preference writes without errors");
+            NSDictionary *values=PDPreferencesValues(domain);
+            for(NSUInteger worker=0;worker<4;worker++) {
+                NSString *key=[NSString stringWithFormat:@"Stress.worker%lu",(unsigned long)worker];
+                verify([values[key] integerValue]==99,@"each writer's last value preserved");
+            }
+            verify(PDPreferencesIntegrityOK(),@"concurrent writes did not set integrity marker");
+            NSLog(@"PREFERENCES_STRESS 400 writes %.3fs; size %@",CFAbsoluteTimeGetCurrent()-begin,PDPreferencesHealth());
         } else if(strcmp(argv[1],"fault")==0) {
             verify(PDPreferencesInstallHook(),@"hook installed for injected storage failure");
             verify(PDPreferencesIntegrityOK(),@"fresh installation has no integrity warning");
