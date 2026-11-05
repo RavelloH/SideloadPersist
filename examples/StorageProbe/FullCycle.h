@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <WebKit/WebKit.h>
 
 @interface SPFullCycle : NSObject <WKNavigationDelegate>
 - (instancetype)initWithParent:(UIViewController *)parent
