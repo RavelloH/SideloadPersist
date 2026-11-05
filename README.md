@@ -145,3 +145,8 @@ v2/v3 成功恢复后生成 `SideloadPersist/restore-last.json` 收据，记录�
 - **可能值得持久化**：Library 下 App 自建的其他非缓存子目录（需先动态枚举和防冲突机制）；进一步验证 NSHTTPCookieStorage/NSURLSession 的真实持久化文件是否完全在 Cookies、WebKit 或其他位置。
 - **暂不应直接整体迁移**：Library/Caches、tmp、Saved Application State。这些通常可以重建或受系统自动清理，强行持久化会让数据包膨胀并引入失效状态。
 - **不能靠目录符号链接解决**：Keychain、App Groups（还依赖签名 Team ID、entitlement 和系统服务的隔离策略）。
+### Preferences 的系统服务同步
+
+因为 NSUserDefaults / CFPreferences 可能由 `cfprefsd` 异步缓存和写盘，SideloadPersist 在 UIApplication 进入后台、正常终止的通知中请求 `standardUserDefaults synchronize` 和 `CFPreferencesAppSynchronize`，尽力增加备份前 Preferences 内容落盘的机会。但这**不能保证所有 Suite 或系统服务数据立刻一致**，更不能替代「完全退出 App 后再压缩整个文件夹」。请特别留意 v3 真机综合测试中的 `RESTORE_COMPARE userDefaults`、`RESTORE_COMPARE defaultsSuite` 与 `RESTORE_COMPARE cfPreferences`，它们验证的不是目录符号链接而是真实 API 读值。
+
+综合测试 v2 在同一次点击中增加 `LIBRARY_DISCOVERY`（Library 顶层自建目录与未知目录分类）、测试用自建 `Library/StorageProbeCustomPersistent` 和 `NSHTTPCookieStorage` 的持久 Cookie 样本。新增的 `RESEARCH_REINSTALL` 仅用于观察，不计入正式的恢复 PASS/FAIL，以便在同一次跨安装实测里筛选下一批目录，不因为尚未覆盖的数据类别阻断综合基线。

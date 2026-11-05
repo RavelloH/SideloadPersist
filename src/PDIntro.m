@@ -4,6 +4,7 @@
 #import "PDArchive.h"
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <CoreFoundation/CFPreferences.h>
 #import <stdlib.h>
 
 static NSString *const kIntroShown = @"SideloadPersist.IntroAccepted.v3";
@@ -32,6 +33,7 @@ static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGrou
 @interface PDIntroManager : NSObject
 + (instancetype)shared;
 - (void)tryPresent;
+- (void)syncPreferencesBeforeSuspend:(NSNotification *)notification;
 @end
 
 @implementation PDIntroManager
@@ -89,6 +91,15 @@ static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGrou
         }
     }
 }
+- (void)syncPreferencesBeforeSuspend:(NSNotification *)notification {
+    // Preferences is a cfprefsd-managed domain. Ask the system to flush the
+    // app's default domain when it goes to the background, reducing the chance
+    // that a Files.app ZIP snapshot is made before asynchronous writes land.
+    // This does not guarantee a snapshot of custom suites or other processes.
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    BOOL result=CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+    if(!result) PDStorageTrace(@"System preference synchronization reported failure before suspend");
+}
 @end
 
 void PDIntroInstall(void) {
@@ -97,6 +108,10 @@ void PDIntroInstall(void) {
     [center addObserver:manager selector:@selector(tryPresent) name:UIApplicationDidBecomeActiveNotification object:nil];
     [center addObserver:manager selector:@selector(tryPresent) name:UISceneDidActivateNotification object:nil];
     [center addObserver:manager selector:@selector(tryPresent) name:UIWindowDidBecomeKeyNotification object:nil];
+    [center addObserver:manager selector:@selector(syncPreferencesBeforeSuspend:)
+                   name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [center addObserver:manager selector:@selector(syncPreferencesBeforeSuspend:)
+                   name:UIApplicationWillTerminateNotification object:nil];
     [manager tryPresent];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1*NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ [manager tryPresent]; });
