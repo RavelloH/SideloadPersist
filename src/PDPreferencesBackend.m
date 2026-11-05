@@ -1,6 +1,7 @@
 #import "PDPreferencesBackend.h"
 #import "PDStorage.h"
 #import <CommonCrypto/CommonDigest.h>
+#import <sys/stat.h>
 
 static NSObject *PDPreferencesGuard(void) {
     static NSObject *guard=nil;
@@ -11,6 +12,24 @@ static NSObject *PDPreferencesGuard(void) {
 static NSError *PDPreferencesError(NSInteger code, NSString *detail) {
     return [NSError errorWithDomain:@"SideloadPersist.Preferences" code:code
        userInfo:@{NSLocalizedDescriptionKey:detail ?: @"偏好数据存储失败"}];
+}
+BOOL PDPreferencesShouldManageDomain(NSString *domain) {
+    if(![domain isKindOfClass:NSString.class] || !domain.length) return NO;
+    // The main app domain is legitimate even for an unusual bundle identifier.
+    NSString *app=NSBundle.mainBundle.bundleIdentifier ?: @"SideloadPersist.StandaloneTest";
+    if([domain isEqualToString:app]) return YES;
+    NSString *lower=domain.lowercaseString;
+    // UIKit, Accessibility, AVFoundation, etc. routinely instantiate their
+    // own suites inside the injected process. They are not application data.
+    if([lower isEqualToString:@"com.apple"] || [lower hasPrefix:@"com.apple."] ||
+       [lower hasPrefix:@"apple."] || [lower hasPrefix:@"group."] ||
+       [@[@"nsglobaldomain",@"nsargumentdomain",@"nsregistrationdomain"]
+            containsObject:lower]) return NO;
+    // CFPreferences may pass a *filesystem path* as a suite identifier.
+    // Never export system paths such as /var/mobile/Library/Preferences/...
+    if([domain containsString:@"/"] || [domain containsString:@"\\"] ||
+       [domain hasPrefix:@"~"]) return NO;
+    return YES;
 }
 NSString *PDPreferencesRoot(void) {
     return [[PDStorageRoot() stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:@"Preferences"];
@@ -184,6 +203,56 @@ BOOL PDPreferencesValidateDirectory(NSString *directory,NSString **reason) {
         return NO;
     }
     return YES;
+}
+BOOL PDPreferencesQuarantineUnmanagedDomains(NSUInteger *count,NSError **error) {
+    @synchronized(PDPreferencesGuard()) {
+        if(count) *count=0;
+        NSFileManager *fm=NSFileManager.defaultManager;
+        NSString *root=PDPreferencesRoot();
+        NSError *listError=nil;
+        NSArray<NSString *> *files=[fm contentsOfDirectoryAtPath:root error:&listError];
+        if(!files) {
+            if(![fm fileExistsAtPath:root]) return YES; // first installation
+            if(error) *error=listError ?: PDPreferencesError(7,@"无法读取原有偏好备份");
+            return NO;
+        }
+        if(files.count>4096) {
+            if(error) *error=PDPreferencesError(8,@"偏好备份文件数量异常，停止隔离");
+            return NO;
+        }
+        NSString *quarantine=nil;
+        for(NSString *name in files) {
+            if(![name.pathExtension isEqualToString:@"plist"]) continue;
+            NSString *from=[root stringByAppendingPathComponent:name];
+            struct stat st={0};
+            if(lstat(from.fileSystemRepresentation,&st)!=0 || !S_ISREG(st.st_mode)) continue;
+            NSData *bytes=[NSData dataWithContentsOfFile:from];
+            id parsed=bytes ? [NSPropertyListSerialization propertyListWithData:bytes
+                     options:NSPropertyListImmutable format:NULL error:nil] : nil;
+            if(![parsed isKindOfClass:NSDictionary.class]) continue;
+            NSDictionary *record=parsed;
+            NSString *domain=record[@"domain"];
+            if(![record[@"format"] isEqualToString:@"SideloadPersist.LivePreferences.V1"] ||
+               ![domain isKindOfClass:NSString.class] ||
+               ![name isEqualToString:PDPreferencesDomainFile(domain).lastPathComponent]) continue;
+            if(PDPreferencesShouldManageDomain(domain)) continue;
+            if(!quarantine) {
+                // Caches is deliberately outside the user-exported Data folder.
+                // Move, never copy or overwrite: preserve recoverability of
+                // older plugin versions without continuing to export OS data.
+                NSString *home=[[PDStorageRoot() stringByDeletingLastPathComponent]
+                                   stringByDeletingLastPathComponent];
+                quarantine=[[[home stringByAppendingPathComponent:@"Library/Caches/SideloadPersist/ExcludedPreferences"]
+                             stringByAppendingPathComponent:NSUUID.UUID.UUIDString] copy];
+                if(![fm createDirectoryAtPath:quarantine withIntermediateDirectories:YES
+                          attributes:nil error:error]) return NO;
+            }
+            NSString *to=[quarantine stringByAppendingPathComponent:name];
+            if(![fm moveItemAtPath:from toPath:to error:error]) return NO;
+            if(count) ++*count;
+        }
+        return YES;
+    }
 }
 NSDictionary *PDPreferencesHealth(void) {
     NSString *root=PDPreferencesRoot();
