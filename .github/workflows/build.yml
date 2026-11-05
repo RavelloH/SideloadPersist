@@ -1,0 +1,29 @@
+name: Build experimental dylib
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile unsigned iOS arm64 dylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          make all
+          file dist/SideloadPersist.dylib
+          xcrun lipo -info dist/SideloadPersist.dylib
+          xcrun otool -L dist/SideloadPersist.dylib
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SideloadPersist-ios-arm64-unsigned
+          path: dist/SideloadPersist.dylib
+          if-no-files-found: error
+          retention-days: 14
