@@ -2,6 +2,7 @@
 #import "PDGuide.h"
 #import "PDStorage.h"
 #import "PDArchive.h"
+#import "PDPreferencesBackend.h"
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <CoreFoundation/CFPreferences.h>
@@ -10,6 +11,7 @@
 static NSString *const kIntroShown = @"SideloadPersist.IntroAccepted.v3";
 static BOOL s_presenting = NO;
 static BOOL s_importInProgress = NO;
+static BOOL s_integrityNoticeShown = NO;
 static BOOL PDInboxHasBackup(void) {
     NSArray<NSString *> *files=[NSFileManager.defaultManager contentsOfDirectoryAtPath:PDStorageInbox() error:nil];
     for (NSString *name in files) if ([name.pathExtension.lowercaseString isEqualToString:@"zip"]) return YES;
@@ -47,7 +49,9 @@ static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGrou
     if (s_presenting) return;
     BOOL pending = PDArchivePendingID().length > 0;
     BOOL seen = [[NSUserDefaults standardUserDefaults] boolForKey:kIntroShown];
-    if (seen && !pending && !PDInboxHasBackup()) return;
+    BOOL integrityWarning= !pending && !PDPreferencesIntegrityOK();
+    if (integrityWarning && s_integrityNoticeShown) return;
+    if (seen && !pending && !PDInboxHasBackup() && !integrityWarning) return;
     UIApplication *application = UIApplication.sharedApplication;
     for (UIScene *scene in application.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
@@ -57,6 +61,17 @@ static UIColor *PDSecondaryBackground(void) { return UIColor.secondarySystemGrou
             UIViewController *presenter = window.rootViewController;
             while (presenter.presentedViewController) presenter = presenter.presentedViewController;
             if (!presenter.view.window || presenter.isBeingPresented || presenter.isBeingDismissed) continue;
+            if(integrityWarning) {
+                s_integrityNoticeShown=YES;
+                UIAlertController *alert=[UIAlertController alertControllerWithTitle:
+                    @"备份完整性异常"
+                    message:@"插件检测到偏好数据写入失败，当前 SideloadPersist 备份可能缺少最新修改。请暂勿卸载或重签此 App；先保存现有数据并检查 preferences-integrity-warning.json。"
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"我已了解"
+                    style:UIAlertActionStyleDefault handler:nil]];
+                [presenter presentViewController:alert animated:YES completion:nil];
+                return;
+            }
             PDWelcomeController *controller = [PDWelcomeController new];
             controller.modalPresentationStyle = UIModalPresentationPageSheet;
             if (@available(iOS 15.0, *)) {
