@@ -303,9 +303,8 @@ static BOOL PDIsInsideOwnSandbox(NSURL *folder) {
     picker.delegate=self;
     picker.allowsMultipleSelection=NO;
     if (compatibility) picker.modalPresentationStyle=UIModalPresentationOverFullScreen;
-    PDLog(@"Opening folder picker; compatibility=%@ presentation=%ld mode=%ld",
-          compatibility ? @"yes" : @"no", (long)picker.modalPresentationStyle,
-          (long)picker.documentPickerMode);
+    PDLog(@"Opening folder picker; compatibility=%@ presentation=%ld (uses Open semantics)",
+          compatibility ? @"yes" : @"no", (long)picker.modalPresentationStyle);
     [self presentViewController:picker animated:YES completion:^{
         PDLog(@"Directory picker presented; compatibility=%@",compatibility ? @"yes" : @"no");
     }];

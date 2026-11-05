@@ -30,7 +30,6 @@
     UIButton *b=[UIButton buttonWithType:UIButtonTypeSystem];
     [b setTitle:name forState:UIControlStateNormal];
     b.titleLabel.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    b.contentEdgeInsets=UIEdgeInsetsMake(8,6,8,6);
     [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return b;
 }
@@ -88,7 +87,7 @@
     UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
     picker.delegate=self;
     picker.allowsMultipleSelection=NO;
-    [self record:@"Opening picker; type=%@; mode=%ld; presentation=%ld",kind,(long)picker.documentPickerMode,(long)picker.modalPresentationStyle];
+    [self record:@"Opening picker; type=%@; presentation=%ld",kind,(long)picker.modalPresentationStyle];
     [self presentViewController:picker animated:YES completion:^{
         [self record:@"Picker presented; type=%@",kind];
     }];
@@ -119,14 +118,22 @@
 }
 @end
 
-@interface ProbeAppDelegate : UIResponder <UIApplicationDelegate>
+@interface ProbeSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic,strong) UIWindow *window;
+@end
+@implementation ProbeSceneDelegate
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+    if (![scene isKindOfClass:[UIWindowScene class]]) return;
+    self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+    self.window.rootViewController=[[ProbeController alloc] init];
+    [self.window makeKeyAndVisible];
+}
+@end
+
+@interface ProbeAppDelegate : UIResponder <UIApplicationDelegate>
 @end
 @implementation ProbeAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
-    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    self.window.rootViewController=[[ProbeController alloc] init];
-    [self.window makeKeyAndVisible];
     return YES;
 }
 @end
