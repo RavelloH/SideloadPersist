@@ -62,10 +62,14 @@ int main(int argc,char **argv) {
             NSString *evil=[home stringByAppendingPathComponent:@"evil.zip"];
             makeZip(evil,"../ESCAPE.txt","MALICIOUS");
             NSError *err=nil;
-            check(!PDArchiveStageZIP([NSURL fileURLWithPath:evil],&err),@"ZIP traversal rejected");
+            check(!PDArchiveStageZIPWithIdentityApproval([NSURL fileURLWithPath:evil],YES,&err),@"ZIP traversal rejected");
             NSString *valid=[home stringByAppendingPathComponent:@"valid.zip"];
             makeZipWithAppleDouble(valid);
-            NSString *id=PDArchiveStageZIP([NSURL fileURLWithPath:valid],&err);
+            check(PDArchiveInspectIdentity([NSURL fileURLWithPath:valid],NULL)==
+                  PDArchiveIdentityStateLegacyUnknown,@"old ZIP lacks identity marker");
+            check(!PDArchiveStageZIP([NSURL fileURLWithPath:valid],&err),
+                  @"legacy archive cannot silently stage without confirmation");
+            NSString *id=PDArchiveStageZIPWithIdentityApproval([NSURL fileURLWithPath:valid],YES,&err);
             check(id.length==36,@"archive staged");
             check([fm fileExistsAtPath:seed],@"import has not altered active original data");
             NSLog(@"All preparation smoke tests passed.");
@@ -118,7 +122,7 @@ int main(int argc,char **argv) {
             NSString *zipPath=[home stringByAppendingPathComponent:@"bare.zip"];
             makeZip(zipPath,"only.txt","BARE_PAYLOAD");
             NSError *error=nil;
-            check(PDArchiveStageZIP([NSURL fileURLWithPath:zipPath],&error).length==36,
+            check(PDArchiveStageZIPWithIdentityApproval([NSURL fileURLWithPath:zipPath],YES,&error).length==36,
                   [NSString stringWithFormat:@"bare-root ZIP import staged: %@",error ?: @"ok"]);
             NSLog(@"All bare ZIP preparation tests passed.");
         } else if (strcmp(argv[1],"apply-bare")==0) {
