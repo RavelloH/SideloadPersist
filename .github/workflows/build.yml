@@ -1,4 +1,4 @@
-name: Build experimental dylib
+name: RC candidate validation (unsigned iOS builds)
 on:
   push:
     branches: [main]
@@ -44,6 +44,8 @@ jobs:
           HOME="$PREFERENCES_HOME" /tmp/pd-preferences-smoke check
           HOOK_HOME="$(mktemp -d)"
           HOME="$HOOK_HOME" /tmp/pd-preferences-smoke hooks
+          FAULT_HOME="$(mktemp -d)"
+          HOME="$FAULT_HOME" /tmp/pd-preferences-smoke fault
       - name: Test relocation, ZIP traversal protection and staged cold-start restore
         shell: bash
         run: |
@@ -83,6 +85,10 @@ jobs:
           HOME="$PRIVATE_HOME" /tmp/pd-v2-storage-smoke apply-private
           PRIVATE_CONFLICT_HOME="$(mktemp -d)"
           HOME="$PRIVATE_CONFLICT_HOME" /tmp/pd-v2-storage-smoke prepare-private-conflict
+          IDENTITY_HOME="$(mktemp -d)"
+          HOME="$IDENTITY_HOME" /tmp/pd-v2-storage-smoke identity-mismatch
+          LEGACY_HOME="$(mktemp -d)"
+          HOME="$LEGACY_HOME" /tmp/pd-v2-storage-smoke identity-legacy
           README_HOME="$(mktemp -d)"
           HOME="$README_HOME" /tmp/pd-v2-storage-smoke readme
           MULTI_HOME="$(mktemp -d)"
