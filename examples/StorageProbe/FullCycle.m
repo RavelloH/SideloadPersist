@@ -787,6 +787,10 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         return;
     }
     if(self.finished) return;
+    BOOL (*integrityOK)(void)=(BOOL(*)(void))dlsym(RTLD_DEFAULT,"PDPreferencesIntegrityOK");
+    BOOL safe=integrityOK && integrityOK();
+    [self check:safe label:@"PREFERENCES_INTEGRITY: no failed native fallback or incomplete export"];
+    valid=valid && safe && self.failures==0;
     self.finished=YES;
     NSString *phase=self.verifying ? @"RESTORE_VERIFICATION" : @"PRE_BACKUP_BASELINE";
     NSDictionary *snapshot=@{
