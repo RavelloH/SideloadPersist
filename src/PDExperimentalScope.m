@@ -172,6 +172,6 @@ BOOL PDRelocateLibraryDirectory(NSString *name,NSString *home,
         if(reason) *reason=@"invalid-library-mapping";
         return NO;
     }
-    NSString *fallback=nil;
+    NSString *__autoreleasing fallback=nil;
     return PDRelocateOne(name,home,nil,target,reason ?: &fallback);
 }
