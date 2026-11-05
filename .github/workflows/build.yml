@@ -48,6 +48,21 @@ jobs:
           (cd dist/probe-stage && ditto -c -k --keepParent Payload ../PickerProbe-unsigned.ipa)
           file dist/PickerProbe-unsigned.ipa
           unzip -l dist/PickerProbe-unsigned.ipa
+      - name: Build unsigned StorageProbe IPA (Foundation/POSIX/SQLite/CoreData tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          mkdir -p dist/storage-stage/Payload/StorageProbe.app
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
+            -miphoneos-version-min=15.0 -fobjc-arc -fmodules -O2 -Wall -Wextra \
+            -Wno-unused-parameter -framework UIKit -framework Foundation \
+            -framework CoreData -lsqlite3 examples/StorageProbe/main.m \
+            -o dist/storage-stage/Payload/StorageProbe.app/StorageProbe
+          cp examples/StorageProbe/Info.plist dist/storage-stage/Payload/StorageProbe.app/Info.plist
+          plutil -lint dist/storage-stage/Payload/StorageProbe.app/Info.plist
+          (cd dist/storage-stage && ditto -c -k --keepParent Payload ../StorageProbe-unsigned.ipa)
+          unzip -l dist/StorageProbe-unsigned.ipa
       - name: Prepare unsigned identity-matched PickerProbe IPA
         if: ${{ inputs.matched_bundle_id != '' }}
         env:
@@ -71,6 +86,13 @@ jobs:
         with:
           name: PickerProbe-unsigned-ipa
           path: dist/PickerProbe-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload StorageProbe test IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: StorageProbe-unsigned-ipa
+          path: dist/StorageProbe-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
       - name: Upload matched identity test IPA
