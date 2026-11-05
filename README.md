@@ -180,3 +180,26 @@ StorageProbe 真机恢复验证达到 **44 PASS / 0 FAIL / 1 SKIP**，四类偏�
 新增加三类模拟回归：**非空源与非空目标冲突**（继续恢复 Application Support/WebKit/Cookies 并保持 Preferences 双份原样）、**非空源与空目标**（自动迁移、保留数据）、**系统或其他软件创建的外来 Preferences 符号链接**（保留链接，正常启动其他范围）。尚不能从目前的用户日志推断 iOS 27 上冲突的确切底层原因；新版诊断会给出对应 scope 和 reason。
 
 一次性综合测试新增 `PREFERENCES_STORAGE_USAGE` / `PREFERENCES_STORAGE_FINAL`（域文件数量及字节数），用于观察实时偏好后端的实际空间开销；并检查删除键是否同时从 `objectForKey` 与 `dictionaryRepresentation` 消失。也验证 CFPreferences 的精确域 API 与 NSUserDefaults 读取的一致性，不必单独重装第二次。
+
+
+## 自定义 Library 私有子目录（Application Support 内嵌备份）
+
+SideloadPersist 不处理普通 Documents 用户文件，也**不**对整个 \`Library\` 进行重定位。Apple 允许应用在 \`Library\` 下建立自己的子目录，但许多框架/系统组件也使用该区域。因此采用保守的定向发现：
+
+- 自动发现以当前 App **Bundle ID** 命名的目录，以及与长度至少五个字符的 **CFBundleName / CFBundleDisplayName** 前缀匹配的自建目录。例如 StorageProbe 的 \`Library/StorageProbeCustomPersistent\`。
+- 如遇非标准自建目录，IPA 的 Info.plist 可以列出 \`SideloadPersistAdditionalLibraryScopes\`（字符串数组，只写直接子目录名），只对已存在的目标执行迁移。此配置**不影响** Application Support、WebKit、Cookies、Preferences 的默认行为。
+- 如果 SideloadPersist 备份中已有过去映射的自建目录，下次冷启动会从备份自动重建原始符号链接，即使新安装时该目录还不存在。
+- 绝不自动迁移 \`Caches\`、\`Preferences\`、\`SplashBoard\`、\`Saved Application State\`、\`Application Support\`、\`WebKit\`、\`Cookies\`、\`group.*\`、\`com.apple.*\` 及非法/非顶层目录。其他不确定来源的目录只观察、不搬移。不会递归遍历整个 Library。
+
+自建目录的原始路径 \`Library/<name>\` 映射到：
+
+\`\`\`text
+Documents/SideloadPersist/Data/Application Support/
+  SideloadPersist.Library/<name>/
+\`\`\`
+
+**这是原有 Application Support 备份范围的子目录**，因此无需改变 ZIP v3 的格式；普通手动压缩备份仍然只需要完整压缩 \`Documents/SideloadPersist\`。在 \`manifest.json\` 的 \`additionalLibraryMappings\` 中记录已验证的映射，自动 README 展示原路径和备份路径。\`library-discovery.json\` 记录筛选结果、冲突和未选中条目数量，不包含文件内容。
+
+遇到原目录和目标都含数据、外来的符号链接或系统拒绝目录操作时，仅保留原状并记录原因；不自动合并或覆盖。新建目录一般在下一次冷启动时发现，研发测试可通过 \`PDStorageRefreshOptionalMappings()\` 在同一轮一键综合测试里立即触发刷新。
+
+**验收范围**：macOS CI 增加首次迁移、冲突拒绝、ZIP v3 冷启动恢复、重装后缺少原符号链接时的重新建立、旧数据保留和系统目录未被触碰的测试。iOS 真机的自建目录迁移仍需实测，不应将其视为已验证的全量 Library 数据备份能力。
