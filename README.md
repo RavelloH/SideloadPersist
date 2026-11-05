@@ -103,3 +103,12 @@ SideloadPersist/
 **安全限制**：v2 的 WebKit/Cookies 恢复目前只对明确启用实验的 StorageProbe 开放，普通 App 如果尝试导入这些扩展目录会收到错误，而不是被静默忽略。`Preferences`、`Keychain` 和 Caches 仍不自动迁移。用户通过文件 App 做整个目录 ZIP 备份时，应当在 App 已退出、WebKit 进程写入已结束后压缩，以减少 SQLite/WAL 不一致的风险。此实验未证明真实 App 的跨安装 WebKit 数据（尤其 Cookie 身份信息）一定可以恢复。
 
 **v2 清单完整性检查**：当 ZIP 内含 `SideloadPersist/manifest.json` 且其 `format=SideloadPersist.Directory.V2` 时，导入器会校验其中 `scopes` 与实际出现的 `Data/*` 目录一致。如果声明包含 Cookies，但 ZIP 丢失该目录，则整体拒绝导入。外部 ZIP 在 `Data/` 下出现尚不支持的目录（例如 Preferences）时也会明确拒绝，避免只恢复一部分数据。当前只保证 ZIP 提取 CRC 完整性；压缩时如果数据库仍在写入，CRC 正确不意味着 SQLite 事务一致，压缩前应停止 App 活动。
+
+### StorageProbe v2 实机跨安装验收步骤
+
+1. **先保留现有测试数据**：StorageProbe 安装新版 dylib 并启用 WebKit/Cookies 实验后，运行「研究 WebKit / Preferences 存储范围」，记录 `WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 的 `after` 值，确认 `EXPERIMENT_LINK WebKit=yes`、`EXPERIMENT_LINK Cookies=yes`。完全结束测试 App，再在「文件」App 中压缩完整的 `SideloadPersist` 文件夹并将 ZIP 转存到 App 文件夹外。
+2. 备份明确安全后，删除 StorageProbe，重新安装同一测试 IPA 与新版 dylib，启动并点击「实验：下次冷启动重定位 WebKit / Cookies」，结束进程再打开一次。此时先检查 `EXPERIMENT_LINK` 两项均为 `yes`。如果数据目录有冲突，不要继续导入。
+3. 在「文件」App 中把备份 ZIP 放到新 StorageProbe 的 `SideloadPersist/Inbox`（或使用可用的系统文件选择器），启动导入，完成校验后按提示结束进程，重新打开 App。
+4. 点击「研究 WebKit / Preferences 存储范围」，确认 `RESTORE_V2_LAST result=committed scopes=(Application Support, WebKit, Cookies)`，并且三个 WebKit 存储计数的 `before` 值与备份前的 `after` 值对应，再观察它们递增。`PERSISTENCE_MANIFEST` 应为 `SideloadPersist.Directory.V2`。
+
+v2 成功恢复后生成 `SideloadPersist/restore-last.json` 收据，记录恢复事务 ID、涉及目录及时间；旧数据保持在 `Backups/<id>/Data`，不自动清理。**此流程尚需 iOS 27.0.1 真机跨安装验证**；macOS CI 的模拟文件测试不能保证 WebKit 进程对于重新安装环境的数据接受度。备份时应让 App 和 WebKit 相关进程结束，以避免压缩正在写入的数据库。`Preferences` 与 Keychain 不包含在这次恢复实验中。

@@ -139,6 +139,15 @@
     NSString *library=[NSHomeDirectory() stringByAppendingPathComponent:@"Library"];
     NSArray<NSString *> *names=@[@"WebKit",@"Preferences",@"Cookies",@"Caches",@"Saved Application State"];
     [self line:@"=== WebKit & Preferences research probe ==="];
+    NSString *persistRoot=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/SideloadPersist"];
+    NSData *manifestData=[NSData dataWithContentsOfFile:[persistRoot stringByAppendingPathComponent:@"manifest.json"]];
+    NSData *receiptData=[NSData dataWithContentsOfFile:[persistRoot stringByAppendingPathComponent:@"restore-last.json"]];
+    NSDictionary *manifest=manifestData ? [NSJSONSerialization JSONObjectWithData:manifestData options:0 error:nil] : nil;
+    NSDictionary *receipt=receiptData ? [NSJSONSerialization JSONObjectWithData:receiptData options:0 error:nil] : nil;
+    [self line:[NSString stringWithFormat:@"PERSISTENCE_MANIFEST format=%@ scopes=%@",
+        manifest[@"format"] ?: @"unknown",manifest[@"scopes"] ?: @[]]];
+    [self line:[NSString stringWithFormat:@"RESTORE_V2_LAST result=%@ scopes=%@ id=%@",
+        receipt[@"result"] ?: @"not-recorded",receipt[@"scopes"] ?: @[],receipt[@"id"] ?: @"none"]];
     NSString *statusFile=[NSHomeDirectory() stringByAppendingPathComponent:
         @"Documents/SideloadPersist/webkit-experiment-result.txt"];
     NSString *status=[NSString stringWithContentsOfFile:statusFile encoding:NSUTF8StringEncoding error:nil];

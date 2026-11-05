@@ -115,6 +115,10 @@ int main(int argc,char **argv) {
         } else if(strcmp(argv[1],"apply")==0) {
             check(PDStorageBootstrap()==PDStorageStateReady,@"v2 cold-start restore committed");
             check(![fm fileExistsAtPath:pending],@"v2 pending flag cleared");
+            NSData *receiptData=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"restore-last.json"]];
+            NSDictionary *receipt=receiptData ? [NSJSONSerialization JSONObjectWithData:receiptData options:0 error:nil] : nil;
+            check([receipt[@"result"] isEqualToString:@"committed"],@"v2 restore receipt marked committed");
+            check([receipt[@"scopes"] count]==3,@"v2 receipt records all restored scopes");
             NSData *manifestBytes=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"manifest.json"]];
             NSDictionary *manifest=manifestBytes ? [NSJSONSerialization JSONObjectWithData:manifestBytes options:0 error:nil] : nil;
             check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V2"],@"manifest auto-upgrades to V2 when links verified");

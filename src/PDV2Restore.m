@@ -165,6 +165,18 @@ BOOL PDV2ApplyPendingRestore(NSString *identifier) {
         PDStorageTrace(@"V2 restore committed, but pending marker could not be cleared: %s",strerror(errno));
         return NO; // next cold start sees fully installed state and retries unlink
     }
+    NSDictionary *receipt=@{
+        @"format":@"SideloadPersist.RestoreReceipt.V2",
+        @"id":identifier,
+        @"scopes":scopes,
+        @"completedAt":@([[NSDate date] timeIntervalSince1970]),
+        @"result":@"committed"
+    };
+    NSData *receiptData=[NSJSONSerialization dataWithJSONObject:receipt options:NSJSONWritingPrettyPrinted error:nil];
+    NSError *receiptError=nil;
+    if(receiptData && ![receiptData writeToFile:[root stringByAppendingPathComponent:@"restore-last.json"]
+                            options:NSDataWritingAtomic error:&receiptError])
+        PDStorageTrace(@"V2 restore receipt write failed: %@",receiptError);
     PDStorageTrace(@"V2 restore committed %@ scopes=%@",identifier,scopes);
     return YES;
 failure:
