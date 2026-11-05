@@ -78,6 +78,11 @@ jobs:
           CONFLICT_HOME="$(mktemp -d)"
           HOME="$CONFLICT_HOME" /tmp/pd-v2-storage-smoke prepare-conflict
           HOME="$CONFLICT_HOME" /tmp/pd-v2-storage-smoke apply-conflict
+          PRIVATE_HOME="$(mktemp -d)"
+          HOME="$PRIVATE_HOME" /tmp/pd-v2-storage-smoke prepare-private
+          HOME="$PRIVATE_HOME" /tmp/pd-v2-storage-smoke apply-private
+          PRIVATE_CONFLICT_HOME="$(mktemp -d)"
+          HOME="$PRIVATE_CONFLICT_HOME" /tmp/pd-v2-storage-smoke prepare-private-conflict
           README_HOME="$(mktemp -d)"
           HOME="$README_HOME" /tmp/pd-v2-storage-smoke readme
           MULTI_HOME="$(mktemp -d)"
