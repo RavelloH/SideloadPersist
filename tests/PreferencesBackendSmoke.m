@@ -40,6 +40,7 @@ int main(int argc,char **argv) {
             verify(PDPreferencesReplaceDomain(domain,@{@"replacement":@"yes"},&error),
                 @"replace persistent domain");
             verify(!PDPreferencesValues(domain)[@"count"],@"replaced domain drops old values");
+            verify([PDPreferencesRemovedKeys(domain) containsObject:@"count"],@"replaced domain retains tombstone for old key");
             verify(PDPreferencesRemoveDomain(suite,&error),@"suite domain removal");
             verify(!PDPreferencesValues(suite)[@"count"],@"suite domain erased");
             NSLog(@"Backend verified: %@",PDPreferencesHealth());
@@ -58,6 +59,8 @@ int main(int argc,char **argv) {
             verify(![prefs objectForKey:@"StorageProbe.SuiteCounter"],@"standard app domain not contaminated by suite");
             [prefs removeObjectForKey:@"StorageProbe.HookBoolean"];
             verify(![prefs boolForKey:@"StorageProbe.HookBoolean"],@"NSUserDefaults remove masked");
+            verify(![[prefs dictionaryRepresentation] objectForKey:@"StorageProbe.HookBoolean"],
+                @"NSUserDefaults dictionaryRepresentation also masks removed key");
             verify(PDPreferencesDomainExists(domain),@"hook-backed live domain exists");
             verify([PDPreferencesValues(domain)[@"StorageProbe.HookCounter"] integerValue]==8,
                 @"native hook wrote live backing file");

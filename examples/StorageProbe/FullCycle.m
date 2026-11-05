@@ -104,7 +104,8 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
         else if([key hasPrefix:@"web"]) scope=@"WebKit";
         else if([key isEqualToString:@"userDefaults"] ||
                 [key isEqualToString:@"defaultsSuite"] ||
-                [key isEqualToString:@"cfPreferences"]) scope=@"Preferences";
+                [key isEqualToString:@"cfPreferences"] ||
+                [key isEqualToString:@"cfDirect"]) scope=@"Preferences";
         if(![self.mappedScopes containsObject:scope]) {
             [self line:[NSString stringWithFormat:@"NOT_PERSISTED %@: no verified data backend for scope %@, direct Documents writes do not prove recovery",key,scope]];
         } else [self compare:key actual:before];
@@ -221,8 +222,13 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
             BOOL (*hookActive)(void)=(BOOL(*)(void))dlsym(RTLD_DEFAULT,"PDPreferencesHookActive");
             BOOL active=hookActive && hookActive() &&
                 [manifest[@"scopeModes"][@"Preferences"] isEqualToString:@"live-api-hook"];
+            NSString *(*hookStatus)(void)=(NSString *(*)(void))dlsym(RTLD_DEFAULT,"PDPreferencesHookStatus");
+            NSString *status=hookStatus?hookStatus():@"symbol-unavailable";
+            [self line:[NSString stringWithFormat:@"PREFERENCES_HOOK_STATUS %@",status]];
+            BOOL cfInstalled=[status containsString:@"CFPreferences app-level hook installed"];
             [self check:active label:@"SCOPE_HOOK Preferences live API storage (no symlink)"];
-            if(active) [verified addObject:scope];
+            [self check:cfInstalled label:@"CFPreferences imported-symbol hook reports installed"];
+            if(active && cfInstalled) [verified addObject:scope];
         } else {
             [self check:matching label:[NSString stringWithFormat:@"SCOPE_LINK %@",scope]];
             if(matching) [verified addObject:scope];
@@ -485,6 +491,36 @@ static NSInteger SPCountSQLite(NSString *path,const char *query) {
     if(current) CFRelease(current);
     [self check:synchronized && observed==after label:@"CFPreferences write/synchronize/read (native-local)"];
     [self record:@"cfPreferences" before:@(before) after:@(after) migrated:YES];
+
+    // The exact-domain CF API can bypass the higher-level app API. Include
+    // it in the same expensive cross-install round rather than requiring a
+    // separate reinstall just to discover a missing rebinding.
+    CFStringRef directKey=CFSTR("StorageProbe.FullCycle.CFDirectCounter");
+    CFPropertyListRef directOld=CFPreferencesCopyValue(directKey,kCFPreferencesCurrentApplication,
+        kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    NSInteger directBefore=0;
+    if(directOld && CFGetTypeID(directOld)==CFNumberGetTypeID())
+        CFNumberGetValue((CFNumberRef)directOld,kCFNumberNSIntegerType,&directBefore);
+    if(directOld) CFRelease(directOld);
+    NSInteger directAfter=directBefore+1;
+    CFNumberRef directValue=CFNumberCreate(kCFAllocatorDefault,kCFNumberNSIntegerType,&directAfter);
+    CFPreferencesSetValue(directKey,directValue,kCFPreferencesCurrentApplication,
+        kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    CFRelease(directValue);
+    BOOL directSynced=CFPreferencesSynchronize(kCFPreferencesCurrentApplication,
+        kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    CFPropertyListRef directNow=CFPreferencesCopyValue(directKey,kCFPreferencesCurrentApplication,
+        kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    NSInteger directObserved=0;
+    if(directNow && CFGetTypeID(directNow)==CFNumberGetTypeID())
+        CFNumberGetValue((CFNumberRef)directNow,kCFNumberNSIntegerType,&directObserved);
+    if(directNow) CFRelease(directNow);
+    [self check:directSynced && directObserved==directAfter
+         label:@"CFPreferences exact-domain set/copy/synchronize"];
+    [self check:[NSUserDefaults.standardUserDefaults integerForKey:
+        @"StorageProbe.FullCycle.CFDirectCounter"]==directAfter
+         label:@"CFPreferences direct write visible through NSUserDefaults typed getter"];
+    [self record:@"cfDirect" before:@(directBefore) after:@(directAfter) migrated:YES];
 
     // Foundation's shared HTTP cookie store is distinct from WKHTTPCookieStore.
     // Its cross-install behavior is still under investigation, so report it

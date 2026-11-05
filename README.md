@@ -1,23 +1,29 @@
 # SideloadPersist — iOS 数据持久化 dylib（实验性）
 
-**v0.11 开发版：默认重定位 Application Support / WebKit / Cookies / Preferences，支持四目录 ZIP v3 与旧版 v2/v1 的冷启动恢复。** 不依赖测试 Bundle ID、Info.plist 开关、标记文件，也不依赖系统文件选择器授权。
+**Preferences API Hook 研发版：Application Support / WebKit / Cookies 使用目录重定位；Preferences 使用按域实时写入的 API Hook，支持多目录 ZIP v3，同时兼容 v1/v2。** 当前 Hook 仍待 iOS 27 真机跨安装验证，不应视为对所有系统偏好域的完整支持。不依赖测试 Bundle ID、Info.plist 开关、标记文件，也不依赖系统文件选择器授权。
 
 ## 运行机制
 
-插件在 dyld 启动加载时，首先同步执行文件系统初始化，尽量阻止 App 主程序在迁移期间运行（但不保证阻止此前系统框架启动的文件访问）。仅对 `Library/Application Support` 执行同卷 `rename()`，然后建立符号链接：
+插件在 dyld 启动加载时，首先同步执行文件系统初始化，尽量阻止 App 主程序在迁移期间运行（但不保证阻止此前系统框架启动的文件访问）。针对 Application Support、WebKit 与 Cookies 使用同卷 `rename()` 并建立符号链接。Preferences 由 API Hook 直接写入 `Data/Preferences` 的单份偏好域 plist，不移动 `Library/Preferences`：
 
 ```text
 App 沙盒/
 ├─ Documents/
 │  └─ SideloadPersist/
 │     ├─ Data/
-│     │  └─ Application Support/       ← 真实、唯一的数据源
+│     │  ├─ Application Support/       ← SQLite / CoreData 等真实文件
+│     │  ├─ WebKit/                    ← WebKit 数据
+│     │  ├─ Cookies/                   ← Cookie 数据
+│     │  └─ Preferences/               ← API Hook 实时域文件（非快照）
 │     ├─ Inbox/                        ← 手动复制 ZIP 后可扫描
 │     ├─ Incoming/                     ← ZIP 恢复暂存
 │     ├─ Backups/                      ← 恢复前的数据，不自动清理
 │     └─ manifest.json
 └─ Library/
-   └─ Application Support → Documents/SideloadPersist/Data/Application Support
+   ├─ Application Support → Documents/SideloadPersist/Data/Application Support
+   ├─ WebKit → Documents/SideloadPersist/Data/WebKit
+   ├─ Cookies → Documents/SideloadPersist/Data/Cookies
+   └─ Preferences/                 ← iOS 系统管理目录，原样保留
 ```
 
 原始路径可继续通过 Foundation、POSIX、SQLite、CoreData 等 API 访问，具体兼容性须用真机测试。源目录与目标目录都含有数据时，停止重定位，不自动合并/覆盖。迁移出错也不得删除原数据。
@@ -66,7 +72,7 @@ ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP �
 GitHub Actions 自动生成（未签名）：
 
 - `SideloadPersist-ios-arm64-unsigned`：注入式 dylib；
-- `StorageProbe-unsigned-ipa`：用于 Foundation、POSIX、SQLite、CoreData 及 WebKit/Preferences/Cookies 测试。`WebKit`、`Cookies`、`Preferences` 与 `Application Support` 在任意已注入插件的 App 中自动重定位；测试 IPA 不再提供专门的实验开关。对于来源/目标冲突的路径，插件会停止迁移而非自动覆盖。
+- `StorageProbe-unsigned-ipa`：用于 Foundation、POSIX、SQLite、CoreData 及 WebKit/Preferences/Cookies 测试。`WebKit`、`Cookies` 与 `Application Support` 自动重定位；`Preferences` 改由 live API Hook 覆盖部分 NSUserDefaults/CFPreferences 入口；测试 IPA 不再提供专门的实验开关。对于来源/目标冲突的路径，插件会停止迁移而非自动覆盖。
 
 增强的 StorageProbe 将分别输出 `PREFERENCES_COUNTER`、`WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 和 `WEBKIT_DATA_RECORDS`，并比较 `Library/WebKit`、`Library/Cookies`、`Library/Caches/com.apple.WebKit.Networking`、`Library/Preferences` 的文件数及大小（`SCOPE_FOOTPRINT phase=before/after`）。不输出用户文件名或网站域名。通过二次启动比较各类别是否持续增长，以确定后续真正需要纳入 ZIP 恢复的目录。目录大小统计只是时点采样；WebKit 网络进程可能异步刷新，不能直接用文件大小证明数据确实只保存在某个目录。
 - `PickerProbe-unsigned-ipa`：保留的文件选择器兼容性测试。
@@ -95,12 +101,13 @@ SideloadPersist/
 └── Data/
     ├── Application Support/
     ├── WebKit/
-    └── Cookies/
+    ├── Cookies/
+    └── Preferences/           （仅 v3，按域实时 plist，而非系统偏好目录副本）
 ```
 
 导入前验证每个 ZIP 文件名、Unix 类型和大小；只提取白名单目录到 `Incoming/<id>/Data/`。不处理任意来源的符号链接、绝对路径或 `../`，忽略备份中的 `Inbox`、`Backups` 和 AppleDouble 元数据。预先持久化 `Incoming/<id>/restore-plan.json` 与 `restore-pending.txt`，仅在下次冷启动恢复。原有目录分别移到 `Backups/<id>/Data/`，全部成功才清除 pending。中途失败时保留暂存文件并尽力回滚；意外中断后会根据 target/stage/backup 的状态尝试恢复处理，如存在不确定状态则拒绝覆盖。备份目录永不自动清理。
 
-**v2/v3 的可用范围**：三目录 v2 与四目录 v3 均对所有注入插件的 App 开放。ZIP 路径、目录冲突、事务回滚和清单完整性校验保留。v3 自动迁移 `Preferences`，但系统 cfprefsd 可能缓存偏好数据，跨安装保留仍需 iOS 真机验证。Keychain、Caches 等未纳入。
+**v2/v3 的可用范围**：三目录 v2 与四目录 v3 均对所有注入插件的 App 开放。ZIP 路径、目录冲突、事务回滚和清单完整性校验保留。v3 恢复 Preferences 的 API Hook 实时存储文件；`Library/Preferences` 的目录不会被移动。Hook 覆盖标准 NSUserDefaults 常见方法、常规 Suite、应用级 CFPreferences 以及 current-user/any-host 精确域 C 符号，但不涵盖全部底层域 API，iOS 真机兼容性与跨安装恢复仍待验证。Keychain、Caches 等未纳入。
 
 **v2 清单完整性检查**：当 ZIP 内含 `SideloadPersist/manifest.json` 且其 `format=SideloadPersist.Directory.V2` 时，导入器会校验其中 `scopes` 与实际出现的 `Data/*` 目录一致。如果声明包含 Cookies，但 ZIP 丢失该目录，则整体拒绝导入。外部 ZIP 在 `Data/` 下出现尚不支持的目录（例如 Other）时也会明确拒绝，避免只恢复一部分数据。当前只保证 ZIP 提取 CRC 完整性；压缩时如果数据库仍在写入，CRC 正确不意味着 SQLite 事务一致，压缩前应停止 App 活动。
 
@@ -121,7 +128,7 @@ v2/v3 成功恢复后生成 `SideloadPersist/restore-last.json` 收据，记录�
 2. **删除并重新安装**：确认 ZIP 在其他位置且文件可读取，再删除测试 App 并重新签名安装，注入相同插件。打开 App 一次完成三目录初始化，通过「导入备份 ZIP」导入完整备份；待提示暂存完成后关闭 App 并再次打开。
 3. **恢复后**：再次点击相同的综合测试按钮，程序会自动识别 `installationID` 与基线记录不同，切换到 `RESTORED_INSTALLATION_VERIFY`，对已重定位的数据执行**恢复前值精确比较**，而不仅仅检查 API 是否成功。完成后显示 `FULL_CYCLE_SUMMARY`、`RESTORE_TEST_FINISHED`，同时生成 `SideloadPersist/fullcycle-verification.json`。
 
-一次执行覆盖：Application Support / WebKit / Cookies / Preferences 符号链接；Foundation 原子写入；1 MiB 文件及 SHA-256 校验；POSIX、mmap、fsync；NSFileCoordinator；SQLite WAL/事务/完整性；CoreData SQLite；WebKit localStorage、IndexedDB、持久化 Cookie；NSUserDefaults 标准域、Suite、CFPreferences 同步；Keychain 测试用通用密码（仅自建测试项，不读取实际密码）；Library/Caches；可配置 App Group 容器（没有 entitlement 时明确跳过）。同时检查 v2 存储清单和恢复收据。
+一次执行覆盖：Application Support / WebKit / Cookies 符号链接和 Preferences API Hook；Foundation 原子写入；1 MiB 文件及 SHA-256 校验；POSIX、mmap、fsync；NSFileCoordinator；SQLite WAL/事务/完整性；CoreData SQLite；WebKit localStorage、IndexedDB、持久化 Cookie；NSUserDefaults 标准域、Suite、CFPreferences 同步；Keychain 测试用通用密码（仅自建测试项，不读取实际密码）；Library/Caches；可配置 App Group 容器（没有 entitlement 时明确跳过）。同时检查 v2 存储清单和恢复收据。
 
 测试将结果区分为 `PASS`、`FAIL`、`SKIP` 和 `OBS NATIVE_NOT_IN_ZIP`：Keychain、Caches 与 App Groups 目前**不在 SideloadPersist 备份范围中**，因此即使其原生状态跨安装保存，也不应算作插件恢复成功。`SKIP` 代表未获得相应权限或未配置；不是应用故障。Keychain 的持久行为还受 Team ID、Keychain access groups 等签名条件约束。当前测试用 App Group 可通过构建时的可选 `StorageProbeTestAppGroup` Info.plist 字段传入，使用前需确保匹配的签名 entitlement。
 
@@ -136,16 +143,17 @@ v2/v3 成功恢复后生成 `SideloadPersist/restore-last.json` 收据，记录�
 
 自动生成的 README 使用 `.readme-generated.sha256` 记录前一次生成文本的哈希；只有上次文件仍保持自动生成内容时，才会在下次启动更新。如果用户手动修改 README（或已有自己的 README），插件会保留内容而不会覆盖。实际映射状态仍以 `manifest.json` 为准。README 处于 Documents 内，删除 App 也会丢失；备份时请将整个 SideloadPersist 文件夹压缩并移到应用目录之外。
 
-## 研发中的 Preferences v3 覆盖
+## Preferences API Hook 开发实现
 
-新增 `Library/Preferences → Documents/SideloadPersist/Data/Preferences` 目录级重定位，v3 ZIP 可以一起恢复 Application Support、WebKit、Cookies、Preferences。新的「一键综合测试 v2」将安装标识移到未迁移的 `Library/Caches`，因此 Preferences 的数据即使恢复，仍然能正确识别“新安装”。测试会对标准 NSUserDefaults、Suite 域和 CFPreferences 进行跨安装基线比较；测试前应退出 App 再压缩 ZIP，避免 cfprefsd 异步写盘时出现不一致。不要将此开发改动直接视为已验证的 iOS Preferences 恢复能力。
+iOS 27.0.1 对 `Library/Preferences` 整目录的 `rename()` 返回 `EPERM`。因此不再移动该目录，也不生成周期性快照。改为在 `Documents/SideloadPersist/Data/Preferences/<SHA256(域名)>.plist` 为每个被 Hook 管理的域写入一份 canonical 二进制 Property List；写入和移除操作原子提交，删除键以墓碑记录，防止读取旧原生偏好值。首次初始化可导入原生持久域；这不会自动删除系统存储中已有的数据副本。
 
+Hook 当前涵盖 Foundation `NSUserDefaults` 常见 typed getter/setter、object/remove、`persistentDomain`、普通 Suite；以及 `CFPreferencesCopyAppValue` / `SetAppValue` / `AppSynchronize` 和当前用户、任意主机的 `CopyValue` / `SetValue` / `Synchronize`。测试会检查 `dictionaryRepresentation` 正确隐藏已删除键、直接 CFPreferences 写入能被 NSUserDefaults 读取、跨安装对比 `cfDirect` 计数。App Group Suite、非主域及批量 CFPreferences、进程外 `cfprefsd`、绕过公开 API 的代码路径均不能保证覆盖。v3 ZIP 在导入前校验 Preferences 域文件，冷启动置换保存内容，既有 V2/V1 继续按旧机制恢复。`StorageProbe` 会显示 `PREFERENCES_HOOK_STATUS`、`SCOPE_HOOK Preferences`、`RESTORE_COMPARE userDefaults`、`defaultsSuite`、`cfPreferences`；**目前仅 macOS 模拟测试通过，iOS 真机仍需验收。**
 ### 后续数据范围优先级
 
 - **可能值得持久化**：Library 下 App 自建的其他非缓存子目录（需先动态枚举和防冲突机制）；进一步验证 NSHTTPCookieStorage/NSURLSession 的真实持久化文件是否完全在 Cookies、WebKit 或其他位置。
 - **暂不应直接整体迁移**：Library/Caches、tmp、Saved Application State。这些通常可以重建或受系统自动清理，强行持久化会让数据包膨胀并引入失效状态。
 - **不能靠目录符号链接解决**：Keychain、App Groups（还依赖签名 Team ID、entitlement 和系统服务的隔离策略）。
-### Preferences 的系统服务同步
+### Preferences 与系统服务
 
 因为 NSUserDefaults / CFPreferences 可能由 `cfprefsd` 异步缓存和写盘，SideloadPersist 在 UIApplication 进入后台、正常终止的通知中请求 `standardUserDefaults synchronize` 和 `CFPreferencesAppSynchronize`，尽力增加备份前 Preferences 内容落盘的机会。但这**不能保证所有 Suite 或系统服务数据立刻一致**，更不能替代「完全退出 App 后再压缩整个文件夹」。请特别留意 v3 真机综合测试中的 `RESTORE_COMPARE userDefaults`、`RESTORE_COMPARE defaultsSuite` 与 `RESTORE_COMPARE cfPreferences`，它们验证的不是目录符号链接而是真实 API 读值。
 

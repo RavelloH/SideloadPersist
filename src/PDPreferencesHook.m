@@ -111,6 +111,7 @@ static NSDictionary *PDDictionaryRepresentation(id self,SEL selector) {
     NSString *domain=PDDomainForDefaults(self);
     if(!domain.length) return original;
     NSMutableDictionary *result=[original mutableCopy] ?: [NSMutableDictionary dictionary];
+    for(NSString *key in PDPreferencesRemovedKeys(domain)) [result removeObjectForKey:key];
     [result addEntriesFromDictionary:PDPreferencesValues(domain)];
     return result;
 }
@@ -154,12 +155,15 @@ static void PDSwap(SEL selector,IMP replacement,IMP *original) {
 
 // CoreFoundation is not toll-free bridged with NSUserDefaults. Rebind the
 // application-imported CFPreferences functions in addition to ObjC methods.
-// This initial hook covers the mainstream app-level get/set/synchronize APIs.
-// Less common CFPreferences exact-domain/batch calls stay native and are
-// explicitly reported as incomplete coverage until tested separately.
+// Covers app-level calls and current-user / any-host explicit-domain calls.
+// CFPreferences batch/host-specific/other-user domains remain native until
+// their behaviors have been tested independently on iOS.
 static CFPropertyListRef (*origCFCopyApp)(CFStringRef,CFStringRef);
 static void (*origCFSetApp)(CFStringRef,CFPropertyListRef,CFStringRef);
 static Boolean (*origCFSyncApp)(CFStringRef);
+static CFPropertyListRef (*origCFCopyValue)(CFStringRef,CFStringRef,CFStringRef,CFStringRef);
+static void (*origCFSetValue)(CFStringRef,CFPropertyListRef,CFStringRef,CFStringRef,CFStringRef);
+static Boolean (*origCFSynchronize)(CFStringRef,CFStringRef,CFStringRef);
 static BOOL PDCFApp( CFStringRef identifier) {
     if(!identifier) return NO;
     if(identifier==kCFPreferencesCurrentApplication) return YES;
@@ -186,6 +190,35 @@ static void PDCFSetApp(CFStringRef key,CFPropertyListRef value,CFStringRef app) 
 static Boolean PDCFSyncApp(CFStringRef app) {
     if(PDCFApp(app) && PDPreferencesDomainExists(PDAppDomain())) return true;
     return origCFSyncApp ? origCFSyncApp(app) : false;
+}
+static BOOL PDCFExplicitAppDomain(CFStringRef app,CFStringRef user,CFStringRef host) {
+    return PDCFApp(app) && user==kCFPreferencesCurrentUser && host==kCFPreferencesAnyHost;
+}
+static CFPropertyListRef PDCFCopyValue(CFStringRef key,CFStringRef app,
+                                       CFStringRef user,CFStringRef host) {
+    if(!key || !PDCFExplicitAppDomain(app,user,host))
+        return origCFCopyValue ? origCFCopyValue(key,app,user,host) : NULL;
+    BOOL present=NO,removed=NO;
+    id value=PDPreferencesValue(PDAppDomain(),(__bridge NSString *)key,&present,&removed);
+    if(present) return CFBridgingRetain(value);
+    if(removed) return NULL;
+    return origCFCopyValue ? origCFCopyValue(key,app,user,host) : NULL;
+}
+static void PDCFSetValue(CFStringRef key,CFPropertyListRef value,CFStringRef app,
+                          CFStringRef user,CFStringRef host) {
+    if(!key || !PDCFExplicitAppDomain(app,user,host)) {
+        if(origCFSetValue) origCFSetValue(key,value,app,user,host);
+        return;
+    }
+    NSError *error=nil;
+    if(!PDPreferencesWriteValue(PDAppDomain(),(__bridge NSString *)key,(__bridge id)value,&error)) {
+        PDLogPreferenceError(@"CFPreferencesSetValue failed",PDAppDomain(),error);
+        if(origCFSetValue) origCFSetValue(key,value,app,user,host);
+    }
+}
+static Boolean PDCFSynchronize(CFStringRef app,CFStringRef user,CFStringRef host) {
+    if(PDCFExplicitAppDomain(app,user,host) && PDPreferencesDomainExists(PDAppDomain())) return true;
+    return origCFSynchronize ? origCFSynchronize(app,user,host) : false;
 }
 BOOL PDPreferencesHookActive(void) {return s_active;}
 NSString *PDPreferencesHookStatus(void) {return s_status;}
@@ -226,7 +259,10 @@ BOOL PDPreferencesInstallHook(void) {
     struct rebinding bindings[]={
         {"CFPreferencesCopyAppValue",(void *)PDCFCopyApp,(void **)&origCFCopyApp},
         {"CFPreferencesSetAppValue",(void *)PDCFSetApp,(void **)&origCFSetApp},
-        {"CFPreferencesAppSynchronize",(void *)PDCFSyncApp,(void **)&origCFSyncApp}
+        {"CFPreferencesAppSynchronize",(void *)PDCFSyncApp,(void **)&origCFSyncApp},
+        {"CFPreferencesCopyValue",(void *)PDCFCopyValue,(void **)&origCFCopyValue},
+        {"CFPreferencesSetValue",(void *)PDCFSetValue,(void **)&origCFSetValue},
+        {"CFPreferencesSynchronize",(void *)PDCFSynchronize,(void **)&origCFSynchronize}
     };
     int result=rebind_symbols(bindings,sizeof(bindings)/sizeof(bindings[0]));
     s_status=result==0?@"NSUserDefaults + CFPreferences app-level hook installed":

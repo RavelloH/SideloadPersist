@@ -100,6 +100,9 @@ id PDPreferencesValue(NSString *domain,NSString *key,BOOL *present,BOOL *removed
 NSDictionary *PDPreferencesValues(NSString *domain) {
     @synchronized(PDPreferencesGuard()) {return PDPreferencesRead(domain)[@"values"] ?: @{};}
 }
+NSArray<NSString *> *PDPreferencesRemovedKeys(NSString *domain) {
+    @synchronized(PDPreferencesGuard()) {return PDPreferencesRead(domain)[@"removed"] ?: @[];}
+}
 BOOL PDPreferencesWriteValue(NSString *domain,NSString *key,id value,NSError **error) {
     @synchronized(PDPreferencesGuard()) {
         NSDictionary *record=PDPreferencesRead(domain);
@@ -157,10 +160,14 @@ BOOL PDPreferencesValidateDirectory(NSString *directory,NSString **reason) {
             if(reason) *reason=@"invalid-preferences-file-type-or-size"; return NO;
         }
         NSData *bytes=[NSData dataWithContentsOfFile:file];
-        NSDictionary *record=bytes ? [NSPropertyListSerialization propertyListWithData:bytes
+        id parsed=bytes ? [NSPropertyListSerialization propertyListWithData:bytes
             options:NSPropertyListImmutable format:NULL error:nil] : nil;
+        if(![parsed isKindOfClass:NSDictionary.class]) {
+            if(reason) *reason=@"invalid-live-preferences-root";return NO;
+        }
+        NSDictionary *record=parsed;
         NSString *domain=record[@"domain"];
-        if(![record isKindOfClass:NSDictionary.class] ||
+        if(
            ![record[@"format"] isEqualToString:@"SideloadPersist.LivePreferences.V1"] ||
            ![domain isKindOfClass:NSString.class] ||
            ![record[@"values"] isKindOfClass:NSDictionary.class] ||
