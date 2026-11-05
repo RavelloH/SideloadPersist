@@ -23,6 +23,16 @@ static void put(NSString *path,NSString *value) {
 static NSString *readFile(NSString *path) {
     return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
 }
+static void makeUnsupportedArchive(NSString *path) {
+    mz_zip_archive zip={0};
+    check(mz_zip_writer_init_file(&zip,path.fileSystemRepresentation,0),@"create unsupported ZIP");
+    for(NSString *name in @[@"SideloadPersist/Data/Application Support/file.txt",
+                           @"SideloadPersist/Data/Preferences/config.plist"]) {
+        check(mz_zip_writer_add_mem(&zip,name.UTF8String,"X",1,MZ_BEST_SPEED),@"add unsupported scope fixture");
+    }
+    check(mz_zip_writer_finalize_archive(&zip),@"finalize unsupported ZIP");
+    mz_zip_writer_end(&zip);
+}
 static void makeArchive(NSString *path) {
     mz_zip_archive zip={0};
     check(mz_zip_writer_init_file(&zip,path.fileSystemRepresentation,0),@"create v2 ZIP");
@@ -60,6 +70,12 @@ int main(int argc,char **argv) {
             put([home stringByAppendingPathComponent:@"Library/Cookies/Cookies.binarycookies"],@"COOKIE_OLD");
             check(PDExperimentalRelocateWebKitAndCookies(home,root),@"mount two experimental scope links");
             put([app stringByAppendingPathComponent:@"test.sqlite"],@"APP_OLD");
+            NSString *unsupported=[home stringByAppendingPathComponent:@"unsupported.zip"];
+            makeUnsupportedArchive(unsupported);
+            NSError *unsupportedError=nil;
+            check(!PDArchiveStageZIP([NSURL fileURLWithPath:unsupported],&unsupportedError),
+                  @"unrecognized Data/Preferences scope rejected instead of silently lost");
+            check(![fm fileExistsAtPath:pending],@"reject does not create pending restore");
             NSString *zip=[home stringByAppendingPathComponent:@"multi.zip"];
             makeArchive(zip);
             check(PDV2ZIPHasExtraScopes([NSURL fileURLWithPath:zip]),@"v2 ZIP auto-detected");
@@ -91,6 +107,10 @@ int main(int argc,char **argv) {
         } else if(strcmp(argv[1],"apply")==0) {
             check(PDStorageBootstrap()==PDStorageStateReady,@"v2 cold-start restore committed");
             check(![fm fileExistsAtPath:pending],@"v2 pending flag cleared");
+            NSData *manifestBytes=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"manifest.json"]];
+            NSDictionary *manifest=manifestBytes ? [NSJSONSerialization JSONObjectWithData:manifestBytes options:0 error:nil] : nil;
+            check([manifest[@"format"] isEqualToString:@"SideloadPersist.Directory.V2"],@"manifest auto-upgrades to V2 when links verified");
+            check([manifest[@"scopes"] count]==3,@"manifest enumerates all three verified scopes");
             check([readFile([app stringByAppendingPathComponent:@"test.sqlite"]) isEqualToString:@"APP_RESTORED"],
                 @"Application Support replaced with v2 copy");
             check([readFile([web stringByAppendingPathComponent:@"localstorage.db"]) isEqualToString:@"WEB_RESTORED"],

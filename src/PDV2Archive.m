@@ -75,6 +75,32 @@ BOOL PDV2AllowsExtraScopes(void) {
     return [[NSFileManager defaultManager] fileExistsAtPath:
             [PDStorageRoot() stringByAppendingPathComponent:@"enable-webkit-experiment.flag"]];
 }
+static BOOL PDV2UnsupportedDataPath(NSString *name) {
+    if(!name.length) return NO;
+    NSArray<NSString *> *parts=[name componentsSeparatedByString:@"/"];
+    for(NSUInteger i=0;i+1<parts.count && i<3;i++) {
+        if(![parts[i] isEqualToString:@"Data"]) continue;
+        BOOL plausibleRoot=(i==0 || (i==1 && [parts[0] isEqualToString:@"SideloadPersist"]) ||
+            (i==1 && parts.count>2) || (i==2 && [parts[1] isEqualToString:@"SideloadPersist"]));
+        if(plausibleRoot && ![PDV2Scopes() containsObject:parts[i+1]]) return YES;
+    }
+    return NO;
+}
+BOOL PDV2ZIPHasUnsupportedScopes(NSURL *url) {
+    if(!url.isFileURL) return NO;
+    BOOL access=[url startAccessingSecurityScopedResource];
+    mz_zip_archive zip={0};
+    BOOL found=NO;
+    if(mz_zip_reader_init_file(&zip,url.fileSystemRepresentation,0)) {
+        for(mz_uint i=0;i<mz_zip_reader_get_num_files(&zip);i++) {
+            NSString *name=PDV2SafePath(PDV2Name(&zip,i));
+            if(name && !PDV2IsMetadata(name) && PDV2UnsupportedDataPath(name)) {found=YES;break;}
+        }
+    }
+    mz_zip_reader_end(&zip);
+    if(access) [url stopAccessingSecurityScopedResource];
+    return found;
+}
 BOOL PDV2ZIPHasExtraScopes(NSURL *url) {
     if(!url.isFileURL) return NO;
     BOOL access=[url startAccessingSecurityScopedResource];
@@ -134,6 +160,10 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
             goto invalid;
         }
         if(PDV2IsMetadata(name)) continue;
+        if(PDV2UnsupportedDataPath(name)) {
+            PDV2Fail(error,10,@"备份包含尚不支持的数据目录。已拒绝导入，避免遗漏其中的数据。");
+            goto invalid;
+        }
         NSString *scope=nil;
         NSString *relative=PDV2Relative(name,&scope);
         if(!scope) continue; // Ignore Inbox/Backups/plugin metadata.

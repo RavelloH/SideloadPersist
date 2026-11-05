@@ -73,8 +73,16 @@ static void PDSetStatus(PDStorageState state, NSString *message) {
     PDStorageTrace(@"state=%ld %@",(long)state,message);
 }
 static void PDWriteManifest(void) {
+    NSMutableArray<NSString *> *scopes=[NSMutableArray arrayWithObject:@"Application Support"];
+    NSString *home=[PDStorageDocuments() stringByDeletingLastPathComponent];
+    for(NSString *scope in @[@"WebKit",@"Cookies"]) {
+        NSString *source=[[home stringByAppendingPathComponent:@"Library"] stringByAppendingPathComponent:scope];
+        NSString *target=[[PDStorageRoot() stringByAppendingPathComponent:@"Data"] stringByAppendingPathComponent:scope];
+        if(PDLinkMatches(source,target)) [scopes addObject:scope];
+    }
     NSDictionary *manifest = @{
-        @"format": @"SideloadPersist.Directory.V1",
+        @"format": scopes.count>1 ? @"SideloadPersist.Directory.V2" : @"SideloadPersist.Directory.V1",
+        @"scopes":scopes,
         @"mode": @"symlink",
         @"source": @"Library/Application Support",
         @"target": @"Data/Application Support",
@@ -171,9 +179,9 @@ PDStorageState PDStorageBootstrap(void) {
             return s_state;
         }
         if (PDLinkMatches(source,target)) {
+            PDExperimentalTryFromStorageProbe();
             PDWriteManifest();
             PDSetStatus(PDStorageStateReady,@"目录映射已存在");
-            PDExperimentalTryFromStorageProbe();
             return s_state;
         }
         struct stat src={0},dst={0};
@@ -232,9 +240,9 @@ PDStorageState PDStorageBootstrap(void) {
             PDSetStatus(PDStorageStateFailed,@"符号链接验证失败");
             return s_state;
         }
+        PDExperimentalTryFromStorageProbe();
         PDWriteManifest();
         PDSetStatus(PDStorageStateRecovered,@"持久化目录已建立并验证");
-        PDExperimentalTryFromStorageProbe();
         return s_state;
     }
 }
