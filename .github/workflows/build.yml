@@ -31,6 +31,19 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -framework Foundation -Isrc tests/PathSmoke.m src/PDRedirect.m -o /tmp/pd-path-smoke
           /tmp/pd-path-smoke
+      - name: Test live preferences store and Foundation API hooks (macOS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx clang -fobjc-arc -std=gnu11 -fmodules -Wall -Wextra \
+            -framework Foundation -Isrc -Ivendor/fishhook \
+            tests/PreferencesBackendSmoke.m src/PDPreferencesBackend.m src/PDPreferencesHook.m \
+            -o /tmp/pd-preferences-smoke
+          PREFERENCES_HOME="$(mktemp -d)"
+          HOME="$PREFERENCES_HOME" /tmp/pd-preferences-smoke prepare
+          HOME="$PREFERENCES_HOME" /tmp/pd-preferences-smoke check
+          HOOK_HOME="$(mktemp -d)"
+          HOME="$HOOK_HOME" /tmp/pd-preferences-smoke hooks
       - name: Test relocation, ZIP traversal protection and staged cold-start restore
         shell: bash
         run: |
