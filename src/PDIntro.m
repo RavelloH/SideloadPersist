@@ -163,7 +163,7 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
 
     UILabel *heading = PDLabel(@"SideloadPersist", 31, UIFontWeightBold, UIColor.labelColor);
     heading.textAlignment = NSTextAlignmentCenter;
-    UILabel *subtitle = PDLabel(@"让侧载应用的数据不再被签名有效期束缚。", 15,
+    UILabel *subtitle = PDLabel(@"为受支持的应用私有数据提供备份与恢复能力。", 15,
                                 UIFontWeightRegular, UIColor.secondaryLabelColor);
     subtitle.textAlignment = NSTextAlignmentCenter;
 
@@ -312,6 +312,35 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
 }
 - (void)stageImport:(NSURL *)url {
     if(s_importInProgress || self.committed) return;
+    NSString *source=nil;
+    PDArchiveIdentityState identity=PDArchiveInspectIdentity(url,&source);
+    if(identity==PDArchiveIdentityStateInvalid) {
+        [self showMessage:@"无法识别备份" body:@"ZIP 损坏或清单不受支持，未修改现有数据。"];
+        return;
+    }
+    if(identity!=PDArchiveIdentityStateMatch) {
+        NSString *current=NSBundle.mainBundle.bundleIdentifier ?: @"未知";
+        NSString *reason=identity==PDArchiveIdentityStateDifferentApp ?
+            [NSString stringWithFormat:@"备份来源：%@\n当前应用：%@\n\n应用标识不同，恢复数据可能无法被当前 App 正确读取。",source ?: @"未知",current] :
+            [NSString stringWithFormat:@"此备份未记录原应用标识。\n当前应用：%@\n\n无法自动确认它是否属于当前 App。",current];
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:
+            @"无法自动核对备份身份"
+            message:[reason stringByAppendingString:
+               @"\n\n仅在确信备份属于要恢复的应用、且已保留原数据时，才允许继续。"]
+            preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消导入"
+            style:UIAlertActionStyleCancel handler:nil]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"我已核对，仍然导入"
+            style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action){
+                [self stageImportApproved:url allowIdentityOverride:YES];
+            }]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    [self stageImportApproved:url allowIdentityOverride:NO];
+}
+- (void)stageImportApproved:(NSURL *)url allowIdentityOverride:(BOOL)approved {
+    if(s_importInProgress || self.committed) return;
     s_importInProgress=YES;
     self.importButton.enabled=NO;
     self.statusLabel.text=@"正在验证并暂存备份…";
@@ -320,7 +349,7 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     __weak typeof(self) weakSelf=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         NSError *error=nil;
-        NSString *identifier=PDArchiveStageZIP(url,&error);
+        NSString *identifier=PDArchiveStageZIPWithIdentityApproval(url,approved,&error);
         dispatch_async(dispatch_get_main_queue(),^{
             PDWelcomeController *strong=weakSelf;
             s_importInProgress=NO;
@@ -396,13 +425,13 @@ static void PDAddSymbol(UIView *container, NSString *name, CGFloat size, UIColor
     [circle.widthAnchor constraintEqualToConstant:98].active=YES;
     [circle.heightAnchor constraintEqualToConstant:98].active=YES;
     PDAddSymbol(circle,@"checkmark",48,UIColor.whiteColor);
-    UILabel *heading=PDLabel(@"备份已安全导入",30,UIFontWeightBold,UIColor.labelColor);
+    UILabel *heading=PDLabel(@"备份已校验并暂存",30,UIFontWeightBold,UIColor.labelColor);
     heading.textAlignment=NSTextAlignmentCenter;
-    UILabel *detail=PDLabel(@"文件已校验并暂存，当前运行中的数据尚未被覆盖。\n\n需要彻底退出并重新打开 App，插件才能在启动阶段完成恢复。",16,UIFontWeightRegular,UIColor.secondaryLabelColor);
+    UILabel *detail=PDLabel(@"备份已暂存，当前应用数据尚未被替换。\n\n请退出并重新打开 App，系统会在启动阶段尝试恢复受支持的数据范围。恢复结果以收据和实际数据检查为准。",16,UIFontWeightRegular,UIColor.secondaryLabelColor);
     detail.textAlignment=NSTextAlignmentCenter;
     UIButton *quit=PDButton(@"退出 App · 完成恢复准备",YES);
     [quit addTarget:self action:@selector(quitNow) forControlEvents:UIControlEventTouchUpInside];
-    UILabel *note=PDLabel(@"退出后请手动点击 App 图标重新打开。原有数据将保留在 Backups，便于回退。",12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
+    UILabel *note=PDLabel(@"重新打开后请检查重要数据。恢复失败时请保留备份 ZIP 和 Backups，不要重复覆盖。",12,UIFontWeightRegular,UIColor.tertiaryLabelColor);
     note.textAlignment=NSTextAlignmentCenter;
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[circle,heading,detail,quit,note]];
     stack.axis=UILayoutConstraintAxisVertical;stack.spacing=20;
