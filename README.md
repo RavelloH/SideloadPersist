@@ -101,3 +101,5 @@ SideloadPersist/
 导入前验证每个 ZIP 文件名、Unix 类型和大小；只提取白名单目录到 `Incoming/<id>/Data/`。不处理任意来源的符号链接、绝对路径或 `../`，忽略备份中的 `Inbox`、`Backups` 和 AppleDouble 元数据。预先持久化 `Incoming/<id>/restore-plan.json` 与 `restore-pending.txt`，仅在下次冷启动恢复。原有目录分别移到 `Backups/<id>/Data/`，全部成功才清除 pending。中途失败时保留暂存文件并尽力回滚；意外中断后会根据 target/stage/backup 的状态尝试恢复处理，如存在不确定状态则拒绝覆盖。备份目录永不自动清理。
 
 **安全限制**：v2 的 WebKit/Cookies 恢复目前只对明确启用实验的 StorageProbe 开放，普通 App 如果尝试导入这些扩展目录会收到错误，而不是被静默忽略。`Preferences`、`Keychain` 和 Caches 仍不自动迁移。用户通过文件 App 做整个目录 ZIP 备份时，应当在 App 已退出、WebKit 进程写入已结束后压缩，以减少 SQLite/WAL 不一致的风险。此实验未证明真实 App 的跨安装 WebKit 数据（尤其 Cookie 身份信息）一定可以恢复。
+
+**v2 清单完整性检查**：当 ZIP 内含 `SideloadPersist/manifest.json` 且其 `format=SideloadPersist.Directory.V2` 时，导入器会校验其中 `scopes` 与实际出现的 `Data/*` 目录一致。如果声明包含 Cookies，但 ZIP 丢失该目录，则整体拒绝导入。外部 ZIP 在 `Data/` 下出现尚不支持的目录（例如 Preferences）时也会明确拒绝，避免只恢复一部分数据。当前只保证 ZIP 提取 CRC 完整性；压缩时如果数据库仍在写入，CRC 正确不意味着 SQLite 事务一致，压缩前应停止 App 活动。

@@ -33,16 +33,18 @@ static void makeUnsupportedArchive(NSString *path) {
     check(mz_zip_writer_finalize_archive(&zip),@"finalize unsupported ZIP");
     mz_zip_writer_end(&zip);
 }
-static void makeArchive(NSString *path) {
+static void makeArchive(NSString *path,BOOL omitCookies) {
     mz_zip_archive zip={0};
     check(mz_zip_writer_init_file(&zip,path.fileSystemRepresentation,0),@"create v2 ZIP");
-    NSDictionary<NSString *,NSString *> *entries=@{
+    NSMutableDictionary<NSString *,NSString *> *entries=[@{
+        @"SideloadPersist/manifest.json":@"{\"format\":\"SideloadPersist.Directory.V2\",\"scopes\":[\"Application Support\",\"WebKit\",\"Cookies\"]}",
         @"SideloadPersist/Data/Application Support/test.sqlite":@"APP_RESTORED",
         @"SideloadPersist/Data/WebKit/localstorage.db":@"WEB_RESTORED",
         @"SideloadPersist/Data/Cookies/Cookies.binarycookies":@"COOKIE_RESTORED",
         @"SideloadPersist/Backups/unrelated.txt":@"MUST_NOT_IMPORT",
         @"__MACOSX/SideloadPersist/Data/WebKit/._localstorage.db":@"MAC_METADATA"
-    };
+    } mutableCopy];
+    if(omitCookies) [entries removeObjectForKey:@"SideloadPersist/Data/Cookies/Cookies.binarycookies"];
     for(NSString *name in entries) {
         NSData *data=[entries[name] dataUsingEncoding:NSUTF8StringEncoding];
         check(mz_zip_writer_add_mem(&zip,name.UTF8String,data.bytes,data.length,MZ_BEST_SPEED),
@@ -76,8 +78,14 @@ int main(int argc,char **argv) {
             check(!PDArchiveStageZIP([NSURL fileURLWithPath:unsupported],&unsupportedError),
                   @"unrecognized Data/Preferences scope rejected instead of silently lost");
             check(![fm fileExistsAtPath:pending],@"reject does not create pending restore");
+            NSString *incomplete=[home stringByAppendingPathComponent:@"incomplete.zip"];
+            makeArchive(incomplete,YES);
+            NSError *incompleteError=nil;
+            check(!PDArchiveStageZIP([NSURL fileURLWithPath:incomplete],&incompleteError),
+                  @"missing declared Cookie scope rejected before staging");
+            check(![fm fileExistsAtPath:pending],@"incomplete backup did not arm restore");
             NSString *zip=[home stringByAppendingPathComponent:@"multi.zip"];
-            makeArchive(zip);
+            makeArchive(zip,NO);
             check(PDV2ZIPHasExtraScopes([NSURL fileURLWithPath:zip]),@"v2 ZIP auto-detected");
             NSError *error=nil;
             NSString *identifier=PDArchiveStageZIP([NSURL fileURLWithPath:zip],&error);

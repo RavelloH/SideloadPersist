@@ -110,7 +110,7 @@ BOOL PDV2ZIPHasExtraScopes(NSURL *url) {
         for(mz_uint i=0;i<mz_zip_reader_get_num_files(&zip);i++) {
             NSString *name=PDV2Name(&zip,i);
             NSString *scope=nil;
-            if(name && PDV2Relative(name,&scope) &&
+            if(name && !PDV2IsMetadata(name) && PDV2Relative(name,&scope) &&
                ([scope isEqualToString:@"WebKit"] || [scope isEqualToString:@"Cookies"])) {
                 found=YES; break;
             }
@@ -144,6 +144,7 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
     NSMutableArray<NSDictionary *> *entries=[NSMutableArray array];
     NSMutableSet<NSString *> *paths=[NSMutableSet set];
     NSMutableSet<NSString *> *scopes=[NSMutableSet set];
+    NSSet<NSString *> *declaredScopes=nil;
     unsigned long long total=0;
     NSUInteger files=0;
     if(count==0 || count>100000) {PDV2Fail(error,3,@"ZIP 条目数超出限制");goto invalid;}
@@ -160,6 +161,38 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
             goto invalid;
         }
         if(PDV2IsMetadata(name)) continue;
+        if([name isEqualToString:@"manifest.json"] ||
+           [name isEqualToString:@"SideloadPersist/manifest.json"] ||
+           [name hasSuffix:@"/SideloadPersist/manifest.json"]) {
+            if(declaredScopes) {
+                PDV2Fail(error,11,@"ZIP 包含多个 v2 清单，无法确认备份范围"); goto invalid;
+            }
+            if(st.m_uncomp_size>65536) {
+                PDV2Fail(error,12,@"备份清单超出安全大小限制"); goto invalid;
+            }
+            size_t size=0;
+            void *buffer=mz_zip_reader_extract_to_heap(&zip,i,&size,0);
+            NSData *json=buffer ? [NSData dataWithBytes:buffer length:size] : nil;
+            if(buffer) mz_free(buffer);
+            NSDictionary *metadata=json ? [NSJSONSerialization JSONObjectWithData:json options:0 error:nil] : nil;
+            if([metadata isKindOfClass:NSDictionary.class] &&
+               [metadata[@"format"] isEqualToString:@"SideloadPersist.Directory.V2"]) {
+                NSArray *declared=metadata[@"scopes"];
+                if(![declared isKindOfClass:NSArray.class] || !declared.count || declared.count>3) {
+                    PDV2Fail(error,13,@"备份清单中的目录列表无效");goto invalid;
+                }
+                NSMutableSet *values=[NSMutableSet set];
+                for(id value in declared) {
+                    if(![value isKindOfClass:NSString.class] || ![PDV2Scopes() containsObject:value] ||
+                       [values containsObject:value]) {
+                        PDV2Fail(error,14,@"备份清单包含未知或重复的目录");goto invalid;
+                    }
+                    [values addObject:value];
+                }
+                declaredScopes=[values copy];
+            }
+            continue;
+        }
         if(PDV2UnsupportedDataPath(name)) {
             PDV2Fail(error,10,@"备份包含尚不支持的数据目录。已拒绝导入，避免遗漏其中的数据。");
             goto invalid;
@@ -185,6 +218,9 @@ NSString *PDV2StageZIP(NSURL *url,NSError **error) {
         [scopes addObject:scope];
         [entries addObject:@{@"index":@(i),@"scope":scope,@"relative":relative,
                               @"directory":@(isDirectory)}];
+    }
+    if(declaredScopes && ![declaredScopes isEqualToSet:scopes]) {
+        PDV2Fail(error,15,@"备份 ZIP 中的目录与清单声明不一致，已拒绝不完整恢复");goto invalid;
     }
     if(![scopes containsObject:@"Application Support"] ||
        !([scopes containsObject:@"WebKit"] || [scopes containsObject:@"Cookies"]) || !files) {
