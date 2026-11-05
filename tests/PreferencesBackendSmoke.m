@@ -97,14 +97,21 @@ int main(int argc,char **argv) {
                    @"removed key exposes registered fallback");
             verify([[prefs dictionaryRepresentation][@"StorageProbe.Registered"] isEqualToString:@"registration-value"],
                    @"dictionaryRepresentation preserves registration fallback");
+            NSDictionary *previousArguments=[prefs volatileDomainForName:NSArgumentDomain] ?: @{};
             [prefs setVolatileDomain:@{@"StorageProbe.HookCounter":@99} forName:NSArgumentDomain];
             verify([prefs integerForKey:@"StorageProbe.HookCounter"]==99,
                    @"NSArgumentDomain overrides managed app value");
             verify([[prefs dictionaryRepresentation][@"StorageProbe.HookCounter"] integerValue]==99,
                    @"dictionaryRepresentation respects argument precedence");
-            [prefs removeVolatileDomainForName:NSArgumentDomain];
+            [prefs setVolatileDomain:previousArguments forName:NSArgumentDomain];
+            NSLog(@"ARGUMENT_RESET nativeDomain=%@ liveValue=%@ observed=%@",
+                  [prefs volatileDomainForName:NSArgumentDomain],
+                  PDPreferencesValues(domain)[@"StorageProbe.HookCounter"],
+                  [prefs objectForKey:@"StorageProbe.HookCounter"]);
+            verify(![prefs volatileDomainForName:NSArgumentDomain][@"StorageProbe.HookCounter"],
+                   @"temporary argument value removed without removing startup defaults");
             verify([prefs integerForKey:@"StorageProbe.HookCounter"]==8,
-                   @"managed value visible after removing argument override");
+                   @"managed value visible after restoring argument domain");
             verify(PDPreferencesDomainExists(domain),@"hook-backed live domain exists");
             verify([PDPreferencesValues(domain)[@"StorageProbe.HookCounter"] integerValue]==8,
                 @"native hook wrote live backing file");
