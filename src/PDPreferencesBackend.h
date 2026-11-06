@@ -22,6 +22,8 @@ FOUNDATION_EXPORT BOOL PDPreferencesQuarantineUnmanagedDomains(NSUInteger *count
 // A failed managed-domain mutation can fall back to native defaults and leave
 // the exported copy stale. Record this as a sticky, visible backup blocker.
 FOUNDATION_EXPORT void PDPreferencesMarkIntegrityFailure(NSString *operation);
+// Captures an error code/category without saving preference keys or values.
+FOUNDATION_EXPORT void PDPreferencesMarkIntegrityFailureWithError(NSString *operation, NSError *failure);
 FOUNDATION_EXPORT BOOL PDPreferencesIntegrityOK(void);
 FOUNDATION_EXPORT NSString *PDPreferencesIntegrityWarning(void);
 FOUNDATION_EXPORT NSDictionary *PDPreferencesHealth(void);
