@@ -150,6 +150,29 @@ int main(int argc,char **argv) {
             verify(!PDPreferencesIntegrityOK(),@"native fallback marks backup integrity unsafe");
             NSString *warning=[PDStorageRoot() stringByAppendingPathComponent:@"preferences-integrity-warning.json"];
             verify([fm fileExistsAtPath:warning],@"integrity warning saved outside managed domain");
+            NSData *bytes=[NSData dataWithContentsOfFile:warning];
+            NSDictionary *report=[NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil];
+            verify([report[@"format"] isEqualToString:@"SideloadPersist.IntegrityWarning.V2"],
+                   @"integrity diagnostic uses structured V2 schema");
+            NSDictionary *first=report[@"firstFailure"];
+            verify([first[@"category"] isEqualToString:@"managed-domain-missing-or-corrupt"],
+                   @"first write error categorized as missing or corrupted domain");
+            verify([first[@"errorCode"] integerValue]==4,
+                   @"first backend error code retained");
+            verify(!report[@"key"] && !report[@"value"] && !first[@"key"] && !first[@"value"],
+                   @"diagnostics do not store preference keys or values");
+            NSError *subsequent=[NSError errorWithDomain:@"SideloadPersist.Preferences"
+                                code:7 userInfo:nil];
+            PDPreferencesMarkIntegrityFailureWithError(@"set-value",subsequent);
+            NSData *next=[NSData dataWithContentsOfFile:warning];
+            NSDictionary *updated=[NSJSONSerialization JSONObjectWithData:next options:0 error:nil];
+            verify([updated[@"firstFailure"] isEqualToDictionary:first],
+                   @"original failure remains visible after subsequent errors");
+            verify([updated[@"lastCategory"] isEqualToString:@"unsupported-property-list-value"] &&
+                   [updated[@"lastErrorCode"] integerValue]==7,
+                   @"subsequent unsupported values categorized without raw data");
+            verify([updated[@"failureCount"] integerValue]==2,
+                   @"incrementing failure count tracks repeated errors");
             verify([[PDPreferencesIntegrityWarning() lowercaseString] containsString:@"备份"],
                    @"backup user-facing warning is actionable");
         } else verify(NO,@"unknown test mode");
