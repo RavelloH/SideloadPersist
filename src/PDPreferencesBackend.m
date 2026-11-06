@@ -125,9 +125,16 @@ NSArray<NSString *> *PDPreferencesRemovedKeys(NSString *domain) {
 BOOL PDPreferencesWriteValue(NSString *domain,NSString *key,id value,NSError **error) {
     @synchronized(PDPreferencesGuard()) {
         NSDictionary *record=PDPreferencesRead(domain);
-        if(!record || ![key isKindOfClass:NSString.class] || !key.length ||
-           (value && !PDPreferencesAllowedObject(value))) {
-            if(error) *error=PDPreferencesError(4,@"未初始化偏好域或无效的键值");
+        if(!record) {
+            if(error) *error=PDPreferencesError(4,@"持久化偏好域文件不存在或无法解析");
+            return NO;
+        }
+        if(![key isKindOfClass:NSString.class] || !key.length) {
+            if(error) *error=PDPreferencesError(6,@"偏好键名称无效");
+            return NO;
+        }
+        if(value && !PDPreferencesAllowedObject(value)) {
+            if(error) *error=PDPreferencesError(7,@"偏好值不能序列化为 Property List");
             return NO;
         }
         NSMutableDictionary *values=[record[@"values"] mutableCopy];
@@ -258,26 +265,78 @@ static BOOL s_integrityFailure=NO;
 static NSString *PDPreferencesIntegrityMarker(void) {
     return [PDStorageRoot() stringByAppendingPathComponent:@"preferences-integrity-warning.json"];
 }
-void PDPreferencesMarkIntegrityFailure(NSString *operation) {
+static NSString *PDPreferencesErrorCategory(NSError *failure) {
+    if(!failure) return @"unknown";
+    if([failure.domain isEqualToString:@"SideloadPersist.Preferences"]) {
+        switch(failure.code) {
+            case 3: case 4: return @"managed-domain-missing-or-corrupt";
+            case 6: return @"invalid-preference-key";
+            case 7: return @"unsupported-property-list-value";
+            case 1: case 2: case 5: return @"invalid-managed-domain-data";
+            case 8: return @"unexpected-preferences-file-count";
+            default: return @"managed-store-error";
+        }
+    }
+    if([failure.domain isEqualToString:NSCocoaErrorDomain] ||
+       [failure.domain isEqualToString:NSPOSIXErrorDomain])
+        return @"filesystem-or-permission-error";
+    if([failure.domain isEqualToString:@"NSPropertyListErrorDomain"])
+        return @"property-list-serialization-error";
+    return @"unknown";
+}
+static NSString *PDPreferencesSafeErrorDomain(NSError *failure) {
+    NSString *domain=failure.domain;
+    if([domain isEqualToString:@"SideloadPersist.Preferences"] ||
+       [domain isEqualToString:NSCocoaErrorDomain] ||
+       [domain isEqualToString:NSPOSIXErrorDomain] ||
+       [domain isEqualToString:@"NSPropertyListErrorDomain"]) return domain;
+    return @"other";
+}
+void PDPreferencesMarkIntegrityFailureWithError(NSString *operation, NSError *failure) {
     @synchronized(PDPreferencesGuard()) {
         s_integrityFailure=YES;
-        // No values, file paths or credential-like keys appear in this report.
-        NSDictionary *message=@{
-            @"format":@"SideloadPersist.IntegrityWarning.V1",
+        NSString *path=PDPreferencesIntegrityMarker();
+        NSData *prior=[NSData dataWithContentsOfFile:path];
+        id parsed=prior ? [NSJSONSerialization JSONObjectWithData:prior options:0 error:nil] : nil;
+        NSDictionary *previous=[parsed isKindOfClass:NSDictionary.class] ? parsed : nil;
+        // Preserve the original fault even after many subsequent writes fail.
+        // Never write keys, values, descriptions, user paths or raw domain names.
+        NSString *category=PDPreferencesErrorCategory(failure);
+        NSDictionary *first=[previous[@"firstFailure"] isKindOfClass:NSDictionary.class] ?
+            previous[@"firstFailure"] : nil;
+        if(!first) {
+            first=@{
+                @"operation":operation ?: @"unknown",
+                @"category":category,
+                @"errorDomain":PDPreferencesSafeErrorDomain(failure),
+                @"errorCode":@(failure ? failure.code : 0),
+                @"at":@([[NSDate date] timeIntervalSince1970])
+            };
+        }
+        NSDictionary *record=@{
+            @"format":@"SideloadPersist.IntegrityWarning.V2",
             @"reason":@"managed-preferences-write-failed",
             @"operation":operation ?: @"unknown",
             @"backupSafe":@NO,
-            @"createdAt":@([[NSDate date] timeIntervalSince1970])
+            @"firstFailure":first,
+            @"lastCategory":category,
+            @"lastErrorDomain":PDPreferencesSafeErrorDomain(failure),
+            @"lastErrorCode":@(failure ? failure.code : 0),
+            @"failureCount":@([previous[@"failureCount"] unsignedIntegerValue]+1),
+            @"createdAt":previous[@"createdAt"] ?: first[@"at"]
         };
-        NSData *data=[NSJSONSerialization dataWithJSONObject:message
-                        options:NSJSONWritingPrettyPrinted error:nil];
-        NSError *error=nil;
-        if(!data || ![data writeToFile:PDPreferencesIntegrityMarker()
-                 options:NSDataWritingAtomic error:&error])
-            NSLog(@"[SideloadPersist Preferences] CRITICAL: unable to persist integrity warning: %@",error);
-        NSLog(@"[SideloadPersist Preferences] CRITICAL: backup may be stale after %@ failure",
-              operation ?: @"unknown");
+        NSData *data=[NSJSONSerialization dataWithJSONObject:record
+            options:NSJSONWritingPrettyPrinted error:nil];
+        NSError *writeError=nil;
+        if(!data || ![data writeToFile:path options:NSDataWritingAtomic error:&writeError])
+            NSLog(@"[SideloadPersist Preferences] CRITICAL: unable to save integrity diagnostic: %@",
+                  writeError);
+        NSLog(@"[SideloadPersist Preferences] CRITICAL: %@ failed: category=%@ code=%ld",
+              operation ?: @"unknown",category,(long)failure.code);
     }
+}
+void PDPreferencesMarkIntegrityFailure(NSString *operation) {
+    PDPreferencesMarkIntegrityFailureWithError(operation,nil);
 }
 BOOL PDPreferencesIntegrityOK(void) {
     @synchronized(PDPreferencesGuard()) {
