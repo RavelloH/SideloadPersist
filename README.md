@@ -1,228 +1,61 @@
-# SideloadPersist — iOS 私有数据持久化 dylib（RC 候选阶段）
+# SideloadPersist
 
-**Preferences API Hook 研发版：Application Support / WebKit / Cookies 使用目录重定位；Preferences 使用按域实时写入的 API Hook，支持多目录 ZIP v3，同时兼容 v1/v2。** StorageProbe 已在 iOS 27 真机验证 v3 跨安装恢复，但不代表所有第三方 App、系统域或 Framework 的行为均已覆盖。不依赖测试 Bundle ID、Info.plist 开关、标记文件，也不依赖系统文件选择器授权。
+**让侧载 iOS 应用的数据更容易备份与恢复。**
 
-## RC 阶段的安全约束（2026-11）
+SideloadPersist 是一款面向 iOS 侧载应用的开源动态库（`dylib`）。注入目标 App 后，它会将部分私有数据放入应用「文件」目录中可访问的位置，帮助你在重新签名、卸载重装等场景下**手动备份和尝试恢复**数据。
 
-当前版本开始进入 **Release Candidate 候选验证**，并非已正式发布稳定版，也没有自动创建 GitHub Release。StorageProbe 的 iOS 真机验证已证明主要四目录范围及自动识别的自建 Library 目录可跨安装读取；公开 RC 仍需完成至少一轮真实第三方 App、异常存储和更换签名环境的验收。
+[![Beta](https://img.shields.io/badge/status-public%20beta-orange)](https://github.com/RavelloH/SideloadPersist/releases)
+[![Release](https://img.shields.io/github/v/release/RavelloH/SideloadPersist?include_prereleases&label=release)](https://github.com/RavelloH/SideloadPersist/releases)
+[![Build](https://github.com/RavelloH/SideloadPersist/actions/workflows/build.yml/badge.svg)](https://github.com/RavelloH/SideloadPersist/actions/workflows/build.yml)
+[![License](https://img.shields.io/github/license/RavelloH/SideloadPersist)](LICENSE)
 
-### 备份身份核对与旧 ZIP 兼容
+> **Beta 提示：** 当前版本仍处于公开测试阶段。已经通过专用测试 App 的跨安装恢复验证，但不保证适用于所有第三方 App。**卸载应用会同时删除应用内的 `Documents/SideloadPersist` 文件夹；请务必先将备份复制到应用沙盒之外。**
 
-新的 `manifest.json` 使用已有的 `originalBundleID` 记录备份来源。选择 ZIP 后插件会校验来源 App 标识：匹配可直接进入数据暂存；**来源不同或清单缺少来源身份**时，会先给出明显提示，并要求手动确认才允许导入。对于用户明确确认的历史 v1/v2/v3 备份，原有兼容恢复路径保留；默认编程接口不允许跳过核对。标识匹配不能证明备份来自可信作者或防止 ZIP 内人为修改，不能视为密码学签名验证。更换 Team ID 不应当自动阻止导入，但 Keychain、App Groups、部分登录状态可能因此失效；更换 Bundle ID 同样可能影响 Preferences 和业务数据库，需要用户自行核实。
+## 能做什么
 
-### 偏好数据完整性
+- **为重装做准备**：将受支持的应用数据集中在 `Documents/SideloadPersist/`，便于通过「文件」App 备份。
+- **覆盖多种存储方式**：支持 Application Support、WebKit、Cookies，以及部分 NSUserDefaults / CFPreferences 偏好数据；可识别部分应用自建的 Library 目录。
+- **导入历史备份**：支持 ZIP 导入与冷启动恢复，并保留旧数据用于排查或回退；兼容旧版 v1 / v2 备份。
+- **尽量避免误覆盖**：对目录冲突、来源 App 身份异常和偏好写入失败给出保护与提示，而非无条件合并数据。
 
-Preferences API Hook 的实时文件更新失败时，为尽量维持 App 运行，可继续通过系统原生偏好 API 写入。但两份数据可能不一致：插件会在 `Documents/SideloadPersist/preferences-integrity-warning.json` 记录**不含偏好值**的完整性错误，并在状态信息显示备份风险。完整性标记不会因下一次普通写入成功而自动消失；StorageProbe 将其判定为 `BACKUP_NOT_READY`，拒绝生成有效备份基线。此时请保留原 App、原始备份及诊断记录，**不得按正常恢复指南直接卸载原 App**。
+<details>
+<summary>English summary</summary>
 
-进一步修复了 NSUserDefaults 搜索域的部分行为：命令行参数域优先于应用域；删除已管理的键后，可回退到 NSGlobalDomain 或注册默认值，避免在读取已删除键时错误地复活旧应用偏好值。仍不承诺对所有系统域、App Group、任意框架行为的完全透明替代。
+SideloadPersist is an open-source, injectable iOS `dylib` for **manual backup and recovery of selected app-private data** across sideloaded app reinstalls. It supports Application Support, WebKit, Cookies, selected preferences APIs, and some app-owned Library folders. This public beta is experimental: it does not preserve Keychain, App Groups, or every app's data, and it **does not survive uninstallation unless you export a backup outside the app's sandbox first**.
 
-### 恢复完成的准确含义
+</details>
 
-**ZIP 校验通过**表示文件通过静态格式检查；**暂存成功**表示下一次冷启动可以尝试替换受支持的数据目录；**收据 committed**表示插件的目录恢复事务已提交。这些步骤都不保证业务应用能够正确读取数据或恢复服务器登录态。用户应始终在重新启动后检查关键内容，并将独立 ZIP 保留在应用文件夹之外。
+## 获取与开始使用
 
-RC 的主要待验收项包括：代表性的原生 App 与 WebView App、确有签名身份变化的安装过程、低磁盘空间下的 Preferences 故障表现、其他线程或框架高频调用，以及额外 Library 目录的显式声明路径。上述工作未完成前，仅建议对具备独立原始备份的非关键 App 试用。
+1. 从 **[Releases](https://github.com/RavelloH/SideloadPersist/releases)** 获取最新 Beta 的 **未签名 `SideloadPersist.dylib`**。
+2. 使用支持动态库注入的 IPA 签名工具将它加入目标 App，并为签名后的 App 启用文件共享。
+3. 首次启动后，按照引导找到「文件」→「在我的 iPhone」→ 对应 App → `SideloadPersist`。
+4. 完全退出 App，**将整个 `SideloadPersist` 文件夹备份到该 App 之外**。需要恢复时，重新安装并注入插件、导入 ZIP、退出后再次启动，再检查实际数据。
 
+详细步骤见 **[安装、备份与恢复指南](docs/BACKUP-RESTORE.md)**。下载的 `StorageProbe` / `PickerProbe` IPA 是独立测试应用，**不会预装插件**，也不是可直接使用的注入成品。
 
-## 运行机制
+## 适用范围与限制
 
-插件在 dyld 启动加载时，首先同步执行文件系统初始化，尽量阻止 App 主程序在迁移期间运行（但不保证阻止此前系统框架启动的文件访问）。针对 Application Support、WebKit 与 Cookies 使用同卷 `rename()` 并建立符号链接。Preferences 由 API Hook 直接写入 `Data/Preferences` 的单份偏好域 plist，不移动 `Library/Preferences`：
+构建目标为 **iOS 15+ / arm64**。iOS 27 真机上的 StorageProbe 已验证包括 SQLite/CoreData、WebKit 与常见偏好 API 在内的多类数据跨安装恢复；这不等于任意 App、签名身份或 iOS 版本已通过兼容性测试。
 
-```text
-App 沙盒/
-├─ Documents/
-│  └─ SideloadPersist/
-│     ├─ Data/
-│     │  ├─ Application Support/       ← SQLite / CoreData 等真实文件
-│     │  ├─ WebKit/                    ← WebKit 数据
-│     │  ├─ Cookies/                   ← Cookie 数据
-│     │  └─ Preferences/               ← API Hook 实时域文件（非快照）
-│     ├─ Inbox/                        ← 手动复制 ZIP 后可扫描
-│     ├─ Incoming/                     ← ZIP 恢复暂存
-│     ├─ Backups/                      ← 恢复前的数据，不自动清理
-│     └─ manifest.json
-└─ Library/
-   ├─ Application Support → Documents/SideloadPersist/Data/Application Support
-   ├─ WebKit → Documents/SideloadPersist/Data/WebKit
-   ├─ Cookies → Documents/SideloadPersist/Data/Cookies
-   └─ Preferences/                 ← iOS 系统管理目录，原样保留
-```
+**不保证迁移** Keychain、App Groups、系统管理的数据目录、Caches、临时目录，或依赖服务器认证的登录状态。存储内容可能含有账号令牌与 Cookie，请妥善保护导出的 ZIP。建议仅在有独立备份的非关键 App 上参与测试。
 
-原始路径可继续通过 Foundation、POSIX、SQLite、CoreData 等 API 访问，具体兼容性须用真机测试。源目录与目标目录都含有数据时，停止重定位，不自动合并/覆盖。迁移出错也不得删除原数据。
+了解更多：[安全边界](docs/SAFETY.md) · [Beta 验收状态](docs/BETA-STATUS.md) · [提交问题](https://github.com/RavelloH/SideloadPersist/issues)
 
-**目前暂不重定位**：`Library/Caches`、`tmp`、Keychain、App Groups。请勿将目录级备份视为全部 App 数据的完整副本。
+## 文档
 
-## 首次介绍页
+| 文档 | 内容 |
+| --- | --- |
+| [安装、备份与恢复](docs/BACKUP-RESTORE.md) | 注入准备、ZIP 备份、重装恢复与故障处理 |
+| [技术架构](docs/ARCHITECTURE.md) | 数据目录重定位、Preferences Hook、恢复格式与事务机制 |
+| [集成与引导界面](docs/INTEGRATION.md) | 注入时序、首次引导与文件共享前提 |
+| [测试与验证](docs/TESTING.md) | StorageProbe、PickerProbe、macOS CI 与真机验收流程 |
+| [安全与完整性](docs/SAFETY.md) | 数据风险、支持边界和恢复状态判定 |
+| [Beta 验收状态](docs/BETA-STATUS.md) | 已验证范围、已知限制与后续验证清单 |
+| [更新记录](CHANGELOG.md) | 已发布版本与主要变化 |
 
-完成同步初始化后，等 App 存在一个有效前台 Scene，以 **仅一个自定义高度 detent 的 Sheet** 展示一次介绍页（iOS 16+ 约为可用高度的 84%，高度至少按 640pt 申请并由系统上限裁剪）；不允许向上扩大。iOS 15 回退为单一 large detent。为避免介绍内容被截断，介绍页已去掉内层 UIScrollView，使标题、路径和按钮同时可见。包含大标题、SF Symbols 图标、功能介绍、文件目录、项目仓库及作者入口、独立六步恢复指南（受支持的范围、先保留备份、校验备份、暂存恢复、核对恢复结果、保留与限制）和备份 ZIP 导入。六步指南使用独立滚动视图，上下边缘通过与系统背景色一致的渐变层柔和隐去内容，暗色模式不再出现灰色光带；「返回」按钮置于固定底部同色背景栏内，始终在安全区域上方，不随正文滚动。用户点击开始使用或向下关闭后，后续通常不再展示，也不驻留悬浮按钮或轮询监听。首次提示标记升级为 v3，使已体验旧版的测试 App 能重新看到新版 UI。如果已经完成介绍的 App 后续在 `SideloadPersist/Inbox` 出现 ZIP，插件会在下一次前台激活时重新展示导入入口；成功暂存后将这个 ZIP 移入 `Inbox/Imported/` 保留，以避免每次启动反复提示。
+## 参与反馈
 
-成功导入 ZIP 后，界面先尝试从半屏过渡至 large detent，再进入不可手势关闭的全屏完成页面，显示绿色成功图标与「退出 App」按钮，防止在下次冷启动应用恢复前继续操作。**按钮由用户主动触发 `exit(0)`，iOS 不提供公开的自行重启 API，因此用户仍需手动再次打开 App。** 这种主动退出可能被系统视为不正常退出；在正式版中应评估更自然的 UX。恢复包在退出前已被完整校验并持久暂存。
+欢迎通过 [GitHub Issues](https://github.com/RavelloH/SideloadPersist/issues) 反馈可复现的问题，并附上 iOS 版本、签名/注入方式、插件版本及**脱敏**诊断。请勿公开上传包含个人数据、Cookie、令牌或账号信息的备份 ZIP。
 
-如果存在尚未执行的 `restore-pending.txt`，即使之前关闭过介绍页，下一次显示时也会进入不可跳过的完成状态。这种 UI 限制只能阻止用户交互，不能完全暂停第三方 App 所有后台线程。
-
-「打开文件 App」尝试 `shareddocuments://`（非 Apple 公开 API，可能失效），失效时显示手动导航路径。文件夹在「文件」中的可见性依赖**签名后的 App Info.plist**：
-
-```xml
-<key>UIFileSharingEnabled</key><true/>
-<key>LSSupportsOpeningDocumentsInPlace</key><true/>
-```
-
-签名工具可以提供「开启文件访问」开关；dylib 自己不能在运行时为系统注册文件提供器。
-
-## 手动恢复
-
-1. **原 App 仍安装时**，在「文件」App 中找到「在我的 iPhone > 原 App > SideloadPersist」，将其完整复制到其他位置（包括 `Data`）。签名过期但尚未删除时，在目前实测环境中仍可读取 Documents。
-2. 删除原 App、重新签名安装后，先启动一次，让插件建立目录，再返回「文件」App。注意**删除 App 会删除 App 自己的 Documents**。
-3. 可先在「文件」App 复制备份中的 `Data/Application Support` 到新 App 的同名目标位置，再重新启动，或者使用首次介绍页的「导入备份 ZIP」按钮。
-
-ZIP 导入支持通过系统选择器“导入副本”，以及将唯一 ZIP 放进 `SideloadPersist/Inbox/` 再点「扫描 Inbox 中的 ZIP」。由「文件」App/Finder 创建的 ZIP 往往包含 `__MACOSX/`、`._*`、`.DS_Store` 辅助元数据；导入器会跳过这些无关条目，不污染 `Application Support`。若签名身份不匹配导致系统选择器失效，仍能使用 Inbox。
-
-可导入 ZIP 的内容布局：
-
-- `SideloadPersist/Data/Application Support/...`
-- `Data/Application Support/...`
-- `Library/Application Support/...`
-- `Application Support/...`
-- 单层包装目录或直接包含 Application Support 的内容
-
-**导入不会即时覆盖正在运行的数据库。** v1 ZIP 继续恢复 Application Support；v2 ZIP 将 Application Support、WebKit、Cookies 作为同一事务暂存并在下一次冷启动恢复。原数据保留在 Backups，发生异常时尝试回滚；新 v3 ZIP 额外支持 Preferences；Keychain 暂未覆盖。
-
-不要在 App 活跃写入 SQLite WAL 时压缩文件。恢复时仍需验证数据库完整性。导出到公开的 Documents 也可能暴露敏感账号数据，请谨慎保管。
-
-## 测试项目
-
-GitHub Actions 自动生成（未签名）：
-
-- `SideloadPersist-ios-arm64-unsigned`：注入式 dylib；
-- `StorageProbe-unsigned-ipa`：用于 Foundation、POSIX、SQLite、CoreData 及 WebKit/Preferences/Cookies 测试。`WebKit`、`Cookies` 与 `Application Support` 自动重定位；`Preferences` 改由 live API Hook 覆盖部分 NSUserDefaults/CFPreferences 入口；测试 IPA 不再提供专门的实验开关。对于来源/目标冲突的路径，插件会停止迁移而非自动覆盖。
-
-增强的 StorageProbe 将分别输出 `PREFERENCES_COUNTER`、`WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 和 `WEBKIT_DATA_RECORDS`，并比较 `Library/WebKit`、`Library/Cookies`、`Library/Caches/com.apple.WebKit.Networking`、`Library/Preferences` 的文件数及大小（`SCOPE_FOOTPRINT phase=before/after`）。不输出用户文件名或网站域名。通过二次启动比较各类别是否持续增长，以确定后续真正需要纳入 ZIP 恢复的目录。目录大小统计只是时点采样；WebKit 网络进程可能异步刷新，不能直接用文件大小证明数据确实只保存在某个目录。
-- `PickerProbe-unsigned-ipa`：保留的文件选择器兼容性测试。
-
-**StorageProbe 不自带 dylib。** 使用 LCSign 等工具注入 dylib、开启文件共享、签名安装，打开 StorageProbe 后按「运行存储 API 测试」，复制结果并在「文件」App 中确认 `SideloadPersist/Data/Application Support/StorageProbe` 下确实存在文件。新版输出 `SQLITE_ROWS`、`COREDATA_ROWS` 精确计数，以及 `PERSISTENT_DATA_MARKER`（随 Documents 数据恢复）和 `INSTALLATION_ID`（存于未重定位的 Caches，卸载重装后变化）。严格验证跨安装恢复时：备份前记录这些数值；重装后导入 ZIP、冷启动再运行，应该看到安装 ID 改变、数据标记恢复到旧值、两种数据库的记录数从旧值继续增加。不要直接在重要 App 上测试首次目录迁移。
-
-CI 另在 macOS 隔离 HOME 环境中验证原子迁移、符号链接路径读写、恶意 ZIP 穿越拦截、ZIP 暂存以及重新启动恢复；**这些并非 iOS 27.0.1 的真机测试**。
-
-本地 macOS/Xcode 编译：`make all`。
-
-## 源码结构与许可
-
-- 新架构：`PDEntry.m`、`PDStorage.m`、`PDIntro.m`、`PDArchive.m`。
-- `PDGate.m`、`PDHooks.m`、`PDRedirect.m` 等为早期技术参考，**不参与当前编译**。
-- 项目 MIT；`vendor/miniz` 保留原 MIT 许可；历史 fishhook 亦保留原许可证。
-
-本项目不会包含任何用户证书、私钥，不自动发布 Release。
-
-## 多目录恢复 v2 / v3（四个私有数据范围已通过 StorageProbe 真机跨安装验证）
-
-旧版只包含 Application Support 的 ZIP 保持 v1 导入及冷启动恢复流程。备份 ZIP 如果包含 `SideloadPersist/Data/WebKit/` 或 `SideloadPersist/Data/Cookies/`，新的导入器将识别多目录格式；v3 另外包含 Preferences：
-
-```text
-SideloadPersist/
-├── manifest.json                     （可选的已有状态信息，不直接恢复）
-└── Data/
-    ├── Application Support/
-    ├── WebKit/
-    ├── Cookies/
-    └── Preferences/           （仅 v3，按域实时 plist，而非系统偏好目录副本）
-```
-
-导入前验证每个 ZIP 文件名、Unix 类型和大小；只提取白名单目录到 `Incoming/<id>/Data/`。不处理任意来源的符号链接、绝对路径或 `../`，忽略备份中的 `Inbox`、`Backups` 和 AppleDouble 元数据。预先持久化 `Incoming/<id>/restore-plan.json` 与 `restore-pending.txt`，仅在下次冷启动恢复。原有目录分别移到 `Backups/<id>/Data/`，全部成功才清除 pending。中途失败时保留暂存文件并尽力回滚；意外中断后会根据 target/stage/backup 的状态尝试恢复处理，如存在不确定状态则拒绝覆盖。备份目录永不自动清理。
-
-**v2/v3 的可用范围**：三目录 v2 与四目录 v3 均对所有注入插件的 App 开放。ZIP 路径、目录冲突、事务回滚和清单完整性校验保留。v3 恢复 Preferences 的 API Hook 实时存储文件；`Library/Preferences` 的目录不会被移动。Hook 覆盖标准 NSUserDefaults 常见方法、常规 Suite、应用级 CFPreferences 以及 current-user/any-host 精确域 C 符号，但不涵盖全部底层域 API，iOS 27 上 StorageProbe 标准域、Suite、应用级与精确域 CFPreferences 均已完成跨安装读值验证，但其他 App 的内部偏好路径仍需逐一确认。Keychain、Caches 等未纳入。
-
-**v2 清单完整性检查**：当 ZIP 内含 `SideloadPersist/manifest.json` 且其 `format=SideloadPersist.Directory.V2` 时，导入器会校验其中 `scopes` 与实际出现的 `Data/*` 目录一致。如果声明包含 Cookies，但 ZIP 丢失该目录，则整体拒绝导入。外部 ZIP 在 `Data/` 下出现尚不支持的目录（例如 Other）时也会明确拒绝，避免只恢复一部分数据。当前只保证 ZIP 提取 CRC 完整性；压缩时如果数据库仍在写入，CRC 正确不意味着 SQLite 事务一致，压缩前应停止 App 活动。
-
-### StorageProbe v2 实机跨安装验收步骤
-
-1. **备份测试数据**：运行 StorageProbe 的存储 API 与 WebKit 诊断，记录 `WEBKIT_LOCALSTORAGE`、`WEBKIT_INDEXEDDB`、`WEBKIT_COOKIE_COUNTER` 的 `after` 值，确认两个 `EXPERIMENT_LINK`（历史日志字段）均为 `yes`。完全结束 App，将 `SideloadPersist` 压缩并保存到 App 文件夹之外。
-2. **重新安装**：确认 ZIP 已安全保存，删除并重新安装测试 IPA，注入当前 dylib。首次启动即自动重定位四个目录，无需再次启用或冷启动实验模式。确认 WebKit/Cookies 符号链接存在。
-3. 在「文件」App 中把备份 ZIP 放到新 StorageProbe 的 `SideloadPersist/Inbox`（或使用可用的系统文件选择器），启动导入，完成校验后按提示结束进程，重新打开 App。
-4. 点击「研究 WebKit / Preferences 存储范围」，确认 `RESTORE_V2_LAST result=committed scopes=(Application Support, WebKit, Cookies)`，并且三个 WebKit 存储计数的 `before` 值与备份前的 `after` 值对应，再观察它们递增。`PERSISTENCE_MANIFEST` 应为 `SideloadPersist.Directory.V2`。
-
-v2/v3 成功恢复后生成 `SideloadPersist/restore-last.json` 收据，记录恢复事务 ID、涉及目录及时间；旧数据保持在 `Backups/<id>/Data`，不自动清理。**三目录 v2 及 Preferences v3 已通过 StorageProbe 在 iOS 27 真机跨安装验收**；macOS CI 的模拟文件测试不能保证 WebKit 进程对于重新安装环境的数据接受度。备份时应让 App 和 WebKit 相关进程结束，以避免压缩正在写入的数据库。Keychain 不包含在此恢复方案中。
-
-## 一键全量 StorageProbe 验收（推荐，节省实机重装次数）
-
-新版 StorageProbe 顶部新增 **「一键综合测试 · 备份前 / 恢复后」**。测试不依赖更多证书、后台服务或单独的文件选择器操作。**只需备份前、重新安装并恢复后各点击一次同一个按钮**，不要额外依次运行旧测试按钮，否则那些操作会改变数据库/WebKit 的计数，影响与基线的精确比对。
-
-1. **旧安装（备份前）**：先确保已经注入 dylib；点击一次综合测试，等待日志中出现 `FULL_CYCLE_SUMMARY` 与 `BACKUP_BASELINE_READY`。它会将 `fullcycle-baseline.json` 和 1 MiB 可校验二进制样本等写入可迁移的 `Data/Application Support/StorageProbe`。检查 `fail=0` 后，完整退出 App，使用「文件」App 将整个 `SideloadPersist` 压缩成 ZIP 并保存到此 App 目录之外。
-2. **删除并重新安装**：确认 ZIP 在其他位置且文件可读取，再删除测试 App 并重新签名安装，注入相同插件。打开 App 一次完成三目录初始化，通过「导入备份 ZIP」导入完整备份；待提示暂存完成后关闭 App 并再次打开。
-3. **恢复后**：再次点击相同的综合测试按钮，程序会自动识别 `installationID` 与基线记录不同，切换到 `RESTORED_INSTALLATION_VERIFY`，对已重定位的数据执行**恢复前值精确比较**，而不仅仅检查 API 是否成功。完成后显示 `FULL_CYCLE_SUMMARY`、`RESTORE_TEST_FINISHED`，同时生成 `SideloadPersist/fullcycle-verification.json`。
-
-一次执行覆盖：Application Support / WebKit / Cookies 符号链接和 Preferences API Hook；Foundation 原子写入；1 MiB 文件及 SHA-256 校验；POSIX、mmap、fsync；NSFileCoordinator；SQLite WAL/事务/完整性；CoreData SQLite；WebKit localStorage、IndexedDB、持久化 Cookie；NSUserDefaults 标准域、Suite、CFPreferences 同步；Keychain 测试用通用密码（仅自建测试项，不读取实际密码）；Library/Caches；可配置 App Group 容器（没有 entitlement 时明确跳过）。同时检查 v2 存储清单和恢复收据。
-
-测试将结果区分为 `PASS`、`FAIL`、`SKIP` 和 `OBS NATIVE_NOT_IN_ZIP`：Keychain、Caches 与 App Groups 目前**不在 SideloadPersist 备份范围中**，因此即使其原生状态跨安装保存，也不应算作插件恢复成功。`SKIP` 代表未获得相应权限或未配置；不是应用故障。Keychain 的持久行为还受 Team ID、Keychain access groups 等签名条件约束。当前测试用 App Group 可通过构建时的可选 `StorageProbeTestAppGroup` Info.plist 字段传入，使用前需确保匹配的签名 entitlement。
-
-基线存在但某项失败时，会保存标记为 `complete=false` 的部分结果，并在日志中显式警告；不要用它证明失败项目成功恢复。测试完成并输出 `BACKUP_BASELINE_READY` **之前不要开始压缩**；WebKit 数据写盘可能异步，压缩前仍必须彻底退出 App。旧版 StorageProbe 的单项按钮保留用于故障定位。
-
-本次综合测试继续增加：`fopen`/`fputs`/`fflush`、`NSFileHandle`、`NSFileManager` 拷贝与移动、中文与 Emoji 文件名、`NSDataReadingMappedIfSafe`、CFPreferences 独立同步、合成 `NSURLCache` 响应、`NSTemporaryDirectory()`。这些测试不需要联网，不访问实际应用凭据或个人内容。已有的文件/数据库/WebKit 恢复断言不会因添加新探针而放松。`fullcycle-baseline.json` 会标明 `complete`，如遇 FAIL，后续恢复验证将提示基线不完整而不会误判为成功。
-
-
-## 自动生成的 Documents/SideloadPersist/README.md
-
-注入插件完成目录初始化后，将在当前 App 的 `Documents/SideloadPersist/README.md` 自动生成 Markdown 说明，包含：作者 **RavelloH**、[GitHub 项目](https://github.com/RavelloH/SideloadPersist)、当前 App 标识、已建立的各目录映射、Inbox/Incoming/Backups/恢复收据说明、导出/恢复操作及安全提示。它会按照实际符号链接更新内容，而不会将失败的迁移标记为成功。
-
-自动生成的 README 使用 `.readme-generated.sha256` 记录前一次生成文本的哈希；只有上次文件仍保持自动生成内容时，才会在下次启动更新。如果用户手动修改 README（或已有自己的 README），插件会保留内容而不会覆盖。实际映射状态仍以 `manifest.json` 为准。README 处于 Documents 内，删除 App 也会丢失；备份时请将整个 SideloadPersist 文件夹压缩并移到应用目录之外。
-
-## Preferences API Hook 开发实现
-
-iOS 27.0.1 对 `Library/Preferences` 整目录的 `rename()` 返回 `EPERM`。因此不再移动该目录，也不生成周期性快照。改为在 `Documents/SideloadPersist/Data/Preferences/<SHA256(域名)>.plist` 为每个被 Hook 管理的域写入一份 canonical 二进制 Property List；写入和移除操作原子提交，删除键以墓碑记录，防止读取旧原生偏好值。首次初始化可导入原生持久域；这不会自动删除系统存储中已有的数据副本。
-
-Hook 当前涵盖 Foundation `NSUserDefaults` 常见 typed getter/setter、object/remove、`persistentDomain`、普通 Suite；以及 `CFPreferencesCopyAppValue` / `SetAppValue` / `AppSynchronize` 和当前用户、任意主机的 `CopyValue` / `SetValue` / `Synchronize`。测试会检查 `dictionaryRepresentation` 正确隐藏已删除键、直接 CFPreferences 写入能被 NSUserDefaults 读取、跨安装对比 `cfDirect` 计数。App Group Suite、非主域及批量 CFPreferences、进程外 `cfprefsd`、绕过公开 API 的代码路径均不能保证覆盖。v3 ZIP 在导入前校验 Preferences 域文件，冷启动置换保存内容，既有 V2/V1 继续按旧机制恢复。`StorageProbe` 会显示 `PREFERENCES_HOOK_STATUS`、`SCOPE_HOOK Preferences`、`RESTORE_COMPARE userDefaults`、`defaultsSuite`、`cfPreferences`；**iOS 27 真机已验证 StorageProbe 的四种 Preferences API 计数从备份前 1、恢复后读出 1、随后更新到 2；其他 App 的兼容性仍需验证。**
-### 系统偏好域隔离（v3 真机测试后修复）
-
-StorageProbe 真机恢复验证达到 **44 PASS / 0 FAIL / 1 SKIP**，四类偏好 API 均读取到恢复前的计数。分析该轮原始备份 ZIP 又发现 **16 个**实时偏好域文件中，仅 **2 个**属于 StorageProbe；其余 **14 个**源自 `com.apple.*` 或 iOS 系统绝对路径形式的 Suite。这些系统框架偏好不应该作为注入 App 的私有内容被备份。
-
-新版本的 `NSUserDefaults initWithSuiteName:` Hook 对 Apple/system 命名空间、App Group 和文件路径形式的偏好域改为原生处理，不写入 `Data/Preferences`。旧版本留下的这些域文件会在下一次成功初始化时**移出活动备份目录，保存到原生 `Library/Caches/SideloadPersist/ExcludedPreferences`**，不会直接删除；若隔离过程失败，则不会宣称 Preferences Hook 已成功启用。应用自身主域及普通第三方 Suite 仍按原方案处理。v3 原始恢复格式保持兼容。
-
-**重要限制**：自动隔离仅针对当前活动的 `Data/Preferences` 文件，不会回写或清理用户已经导出的旧 ZIP，也不会修改 `Backups` 或 `Inbox/Imported` 中历史存档。旧档案可能仍含这些系统偏好副本；不要公开分享。确认新版真机检查通过并生成清洁备份之后，再根据自己的保留需求处理旧档案。系统 Caches 可能被 iOS 清理，因此隔离区仅用于避免立刻删除误收集的数据，不应当作长期备份。
-
-### 后续数据范围优先级
-
-- **可能值得持久化**：Library 下 App 自建的其他非缓存子目录（需先动态枚举和防冲突机制）；进一步验证 NSHTTPCookieStorage/NSURLSession 的真实持久化文件是否完全在 Cookies、WebKit 或其他位置。
-- **暂不应直接整体迁移**：Library/Caches、tmp、Saved Application State。这些通常可以重建或受系统自动清理，强行持久化会让数据包膨胀并引入失效状态。
-- **不能靠目录符号链接解决**：Keychain、App Groups（还依赖签名 Team ID、entitlement 和系统服务的隔离策略）。
-### Preferences 与系统服务
-
-因为 NSUserDefaults / CFPreferences 可能由 `cfprefsd` 异步缓存和写盘，SideloadPersist 在 UIApplication 进入后台、正常终止的通知中请求 `standardUserDefaults synchronize` 和 `CFPreferencesAppSynchronize`，尽力增加备份前 Preferences 内容落盘的机会。但这**不能保证所有 Suite 或系统服务数据立刻一致**，更不能替代「完全退出 App 后再压缩整个文件夹」。请特别留意 v3 真机综合测试中的 `RESTORE_COMPARE userDefaults`、`RESTORE_COMPARE defaultsSuite` 与 `RESTORE_COMPARE cfPreferences`，它们验证的不是目录符号链接而是真实 API 读值。
-
-综合测试 v2 在同一次点击中增加 `LIBRARY_DISCOVERY`（Library 顶层自建目录与未知目录分类）、测试用自建 `Library/StorageProbeCustomPersistent` 和 `NSHTTPCookieStorage` 的持久 Cookie 样本。新增的 `RESEARCH_REINSTALL` 仅用于观察，不计入正式的恢复 PASS/FAIL，以便在同一次跨安装实测里筛选下一批目录，不因为尚未覆盖的数据类别阻断综合基线。
-
-## v0.11.1 修复：扩展目录冲突不再阻断 Application Support
-
-实机发现 v3 原实现会将 WebKit、Cookies、Preferences 三个可选目录视为同一组全有或全无的前置条件：任一目录存在冲突，插件在核心 Application Support 初始化之前就返回。由此产生 `manifest.json` / 自动 README 缺失和所有 symlink 不存在的情况；StorageProbe 虽能直接写入 Documents/Data，但不代表数据真的被原应用路径使用。此问题已通过独立目录迁移修复。
-
-每个可选目录现在独立检查、迁移及回滚；对源和目标都非空的数据严格保持原样，绝不自动覆盖或删除，其他可迁移目录与核心 Application Support 继续运行。对于目标原本是**空文件夹**但源目录有数据的情况，可删除空目标、原子移动原目录，再建立符号链接，失败时尝试恢复原状。对于已有外来符号链接、目录类型不符等情况不操作该目录。
-
-每次启动会创建 `Documents/SideloadPersist/scope-mapping-result.json`，记录各扩展目录的 `mapped`、`reason`、路径类型和直接子项数量（不列出文件名、不读私有文件内容）；同时 `scope-mapping-result.txt` 为 `ready` 或 `partial`。`manifest.json` 和自动 README **只列入真实验证的映射**；如果某个目录没成功映射，README 会明确标注未建立映射。部分扩展目录失效不意味着全部 App 数据都被持久化；在研究阶段应先查清原因再备份。
-
-一键综合测试同时修复了误导性通过信号：没有清单、README、原路径映射，或恢复比较出错时，输出 `BACKUP_NOT_READY` / `BACKUP_ABORTED`，诊断保存在 `fullcycle-diagnostics.json`，**不会**生成新的有效备份基线，也不会再输出 `BACKUP_BASELINE_READY`。只有 `fail=0` 且报告写入成功才允许开始备份。单个数据文件能直接从 Documents 读写不再被用作映射成功的证据。
-
-新增加三类模拟回归：**非空源与非空目标冲突**（继续恢复 Application Support/WebKit/Cookies 并保持 Preferences 双份原样）、**非空源与空目标**（自动迁移、保留数据）、**系统或其他软件创建的外来 Preferences 符号链接**（保留链接，正常启动其他范围）。尚不能从目前的用户日志推断 iOS 27 上冲突的确切底层原因；新版诊断会给出对应 scope 和 reason。
-
-一次性综合测试新增 `PREFERENCES_STORAGE_USAGE` / `PREFERENCES_STORAGE_FINAL`（域文件数量及字节数），用于观察实时偏好后端的实际空间开销；并检查删除键是否同时从 `objectForKey` 与 `dictionaryRepresentation` 消失。也验证 CFPreferences 的精确域 API 与 NSUserDefaults 读取的一致性，不必单独重装第二次。
-
-
-## 自定义 Library 私有子目录（Application Support 内嵌备份）
-
-SideloadPersist 不处理普通 Documents 用户文件，也**不**对整个 `Library` 进行重定位。Apple 允许应用在 `Library` 下建立自己的子目录，但许多框架/系统组件也使用该区域。因此采用保守的定向发现：
-
-- 自动发现以当前 App **Bundle ID** 命名的目录，以及与长度至少五个字符的 **CFBundleName / CFBundleDisplayName** 前缀匹配的自建目录。例如 StorageProbe 的 `Library/StorageProbeCustomPersistent`。
-- 如遇非标准自建目录，IPA 的 Info.plist 可以列出 `SideloadPersistAdditionalLibraryScopes`（字符串数组，只写直接子目录名），只对已存在的目标执行迁移。此配置**不影响** Application Support、WebKit、Cookies、Preferences 的默认行为。
-- 如果 SideloadPersist 备份中已有过去映射的自建目录，下次冷启动会从备份自动重建原始符号链接，即使新安装时该目录还不存在。
-- 绝不自动迁移 `Caches`、`Preferences`、`SplashBoard`、`Saved Application State`、`Application Support`、`WebKit`、`Cookies`、`group.*`、`com.apple.*` 及非法/非顶层目录。其他不确定来源的目录只观察、不搬移。不会递归遍历整个 Library。
-
-自建目录的原始路径 `Library/<name>` 映射到：
-
-```text
-Documents/SideloadPersist/Data/Application Support/
-  SideloadPersist.Library/<name>/
-```
-
-**这是原有 Application Support 备份范围的子目录**，因此无需改变 ZIP v3 的格式；普通手动压缩备份仍然只需要完整压缩 `Documents/SideloadPersist`。在 `manifest.json` 的 `additionalLibraryMappings` 中记录已验证的映射，自动 README 展示原路径和备份路径。`library-discovery.json` 记录筛选结果、冲突和未选中条目数量，不包含文件内容。
-
-遇到原目录和目标都含数据、外来的符号链接或系统拒绝目录操作时，仅保留原状并记录原因；不自动合并或覆盖。新建目录一般在下一次冷启动时发现，研发测试可通过 `PDStorageRefreshOptionalMappings()` 在同一轮一键综合测试里立即触发刷新。
-
-**验收范围**：macOS CI 增加首次迁移、冲突拒绝、ZIP v3 冷启动恢复、重装后缺少原符号链接时的重新建立、旧数据保留和系统目录未被触碰的测试。iOS 真机的自建目录迁移仍需实测，不应将其视为已验证的全量 Library 数据备份能力。
-
-StorageProbe 的下一次单轮真机综合测试还将覆盖 `Library/StorageProbeCustomPersistent`（自动识别）与 `Library/ThirdPartyState`（通过 Info.plist 明确列入）这两种来源，并对恢复前后标记进行精确比较。两者均位于原有 Application Support 备份范围中，无需引入新的 ZIP 版本。
+项目由 [RavelloH](https://github.com/RavelloH) 维护，采用 [MIT License](LICENSE)。`vendor/` 中的第三方组件遵循各自的许可声明。

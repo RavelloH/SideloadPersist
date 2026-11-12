@@ -1,4 +1,4 @@
-name: RC candidate validation (unsigned iOS builds)
+name: Beta validation (unsigned iOS builds)
 on:
   push:
     branches: [main, 'rc/**', 'fix/**']
